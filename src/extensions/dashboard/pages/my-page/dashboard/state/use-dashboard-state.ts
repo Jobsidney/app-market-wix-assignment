@@ -350,7 +350,7 @@ export function useDashboardState() {
           setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
         } catch {}
       })();
-    }, 7000);
+    }, 2000);
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
