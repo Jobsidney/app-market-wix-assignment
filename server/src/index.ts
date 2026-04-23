@@ -37,7 +37,15 @@ const corsOptions: cors.CorsOptions = {
   },
   credentials: true,
   methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["content-type", "authorization", "x-wix-site-id", "x-app-market-key", "x-sync-signature"],
+  allowedHeaders: [
+    "content-type",
+    "authorization",
+    "cache-control",
+    "pragma",
+    "x-wix-site-id",
+    "x-app-market-key",
+    "x-sync-signature",
+  ],
   optionsSuccessStatus: 204,
 };
 
