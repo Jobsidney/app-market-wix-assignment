@@ -4,6 +4,28 @@ import { getHubspotProperties } from "./hubspot-properties-cache.js";
 
 type HubspotProps = Record<string, string>;
 
+function normalizeEmail(raw: string): string | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+  const direct = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (direct.test(trimmed)) {
+    return trimmed;
+  }
+  const tokenized = trimmed
+    .split(/[,\s;|]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  for (const token of tokenized) {
+    if (direct.test(token)) {
+      return token;
+    }
+  }
+  const embedded = trimmed.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
+  return embedded ? embedded[0].toLowerCase() : null;
+}
+
 function toStringRecord(input: Record<string, unknown>): HubspotProps {
   const out: HubspotProps = {};
   for (const [key, value] of Object.entries(input)) {
@@ -28,6 +50,19 @@ async function filterKnownProperties(wixSiteId: string, client: Client, props: H
   return filtered;
 }
 
+function normalizeHubspotProperties(props: HubspotProps): HubspotProps {
+  const next: HubspotProps = { ...props };
+  if (typeof next.email === "string") {
+    const normalized = normalizeEmail(next.email);
+    if (normalized) {
+      next.email = normalized;
+    } else {
+      delete next.email;
+    }
+  }
+  return next;
+}
+
 async function findByEmail(client: Client, email?: string): Promise<string | null> {
   if (!email) {
     return null;
@@ -47,7 +82,9 @@ export async function upsertHubspotContact(
 ): Promise<string> {
   const accessToken = await getValidAccessToken(wixSiteId);
   const client = new Client({ accessToken });
-  const normalized = await filterKnownProperties(wixSiteId, client, toStringRecord(mappedProperties));
+  const normalized = normalizeHubspotProperties(
+    await filterKnownProperties(wixSiteId, client, toStringRecord(mappedProperties)),
+  );
   if (Object.keys(normalized).length === 0) {
     throw new Error("No valid HubSpot properties after mapping");
   }
