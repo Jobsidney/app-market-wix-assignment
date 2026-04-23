@@ -17,7 +17,7 @@
     "release": "wix release",
     "generate": "wix generate",
     "skills": "wix skills",
-    "start": "npm run start:server"
+    "start": "npm run build:server && npm run start:server"
   },
   "dependencies": {
     "@hubspot/api-client": "^13.5.0",
