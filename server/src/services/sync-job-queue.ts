@@ -19,6 +19,7 @@ interface DbJob {
 
 let running = false;
 let timer: NodeJS.Timeout | null = null;
+const MAX_JOBS_PER_TICK = 8;
 
 export async function enqueueJob(
   wixSiteId: string,
@@ -117,29 +118,31 @@ async function workerTick(): Promise<void> {
   }
   running = true;
   try {
-    const job = await reserveJob();
-    if (!job) {
-      return;
-    }
-    try {
-      const live = await getSyncLiveEnabled(job.sync_id);
-      if (!live && (job.job_type === "sync_event" || job.job_type === "form_submission")) {
-        await requeueJobWithoutAttemptPenalty(job.id);
-        return;
+    for (let processed = 0; processed < MAX_JOBS_PER_TICK; processed += 1) {
+      const job = await reserveJob();
+      if (!job) {
+        break;
       }
-      await processJob(job);
-      await finalizeJob(job.id, "done");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown job error";
-      await finalizeJob(job.id, job.attempts >= 3 ? "failed" : "queued", message);
-      logger.error({ jobId: job.id, error: message }, "Failed job, will retry if attempts remain");
+      try {
+        const live = await getSyncLiveEnabled(job.sync_id);
+        if (!live && (job.job_type === "sync_event" || job.job_type === "form_submission")) {
+          await requeueJobWithoutAttemptPenalty(job.id);
+          continue;
+        }
+        await processJob(job);
+        await finalizeJob(job.id, "done");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown job error";
+        await finalizeJob(job.id, job.attempts >= 3 ? "failed" : "queued", message);
+        logger.error({ jobId: job.id, error: message }, "Failed job, will retry if attempts remain");
+      }
     }
   } finally {
     running = false;
   }
 }
 
-export function startSyncWorker(intervalMs = 400): void {
+export function startSyncWorker(intervalMs = 200): void {
   if (timer) {
     return;
   }
