@@ -16,13 +16,32 @@ assertSyncSecurityEnv();
 
 const app = express();
 
+const corsOptions: cors.CorsOptions = {
+  origin(origin, callback) {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+    if (
+      origin.includes(".wix.com") ||
+      origin.includes(".wixsite.com") ||
+      origin.includes(".wixstudio.com") ||
+      origin.includes("localhost")
+    ) {
+      callback(null, true);
+      return;
+    }
+    callback(null, false);
+  },
+  credentials: true,
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["content-type", "authorization", "x-wix-site-id", "x-app-market-key", "x-sync-signature"],
+  optionsSuccessStatus: 204,
+};
+
 app.use(helmet());
-app.use(
-  cors({
-    origin: true,
-    credentials: true,
-  }),
-);
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(
   express.json({
     limit: "1mb",
