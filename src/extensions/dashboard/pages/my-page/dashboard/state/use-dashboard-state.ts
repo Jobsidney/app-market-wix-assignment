@@ -57,7 +57,13 @@ export function useDashboardState() {
   const [syncStarted, setSyncStarted] = useState(false);
   const [postWizardPhase, setPostWizardPhase] = useState<null | "historical" | "success_overlay" | "summary">(null);
   const [liveEnabled, setLiveEnabled] = useState(true);
-  const getSyncQuery = (syncId: number | null) => (syncId ? `?syncId=${encodeURIComponent(String(syncId))}` : "");
+  const getSyncQuery = (syncId: number | null) =>
+    syncId !== null && syncId !== undefined ? `?syncId=${encodeURIComponent(String(syncId))}` : "";
+  const getSyncJobsPath = (syncId: number | null) => {
+    const basePath = `/dashboard/sync-jobs${getSyncQuery(syncId)}`;
+    const separator = basePath.includes("?") ? "&" : "?";
+    return `${basePath}${separator}_ts=${Date.now()}`;
+  };
 
   const selectedSync = useMemo(
     () => syncDefinitions.find((sync) => sameSyncId(sync.id, selectedSyncId)) ?? null,
@@ -265,7 +271,7 @@ export function useDashboardState() {
             mappingResult = { mappings: [] };
           }
           try {
-            jobsResult = await apiRequest<SyncJobsResponse>(`/dashboard/sync-jobs${getSyncQuery(firstSyncId)}`);
+            jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(firstSyncId));
           } catch {
             jobsResult = { jobs: [], managedRecordsCount: 0 };
           }
@@ -325,6 +331,31 @@ export function useDashboardState() {
     }
     setLiveEnabled(selectedSync?.live ?? true);
   }, [dashboardMode, selectedSync]);
+
+  useEffect(() => {
+    const shouldPollHistory =
+      dashboardMode === "details" || postWizardPhase === "summary" || postWizardPhase === "success_overlay";
+    if (!shouldPollHistory || !selectedSyncId) {
+      return;
+    }
+    let cancelled = false;
+    const intervalId = window.setInterval(() => {
+      void (async () => {
+        try {
+          const jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(selectedSyncId));
+          if (cancelled) {
+            return;
+          }
+          setJobs(jobsResult.jobs);
+          setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
+        } catch {}
+      })();
+    }, 7000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [dashboardMode, postWizardPhase, selectedSyncId]);
 
   const handleConnectToggle = async () => {
     setErrorMessage(null);
@@ -461,7 +492,7 @@ export function useDashboardState() {
         setSyncStarted(true);
         setSuccessMessage(null);
         try {
-          const jobsResult = await apiRequest<SyncJobsResponse>(`/dashboard/sync-jobs${getSyncQuery(selectedSyncId)}`);
+          const jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(selectedSyncId));
           setJobs(jobsResult.jobs);
           setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
         } catch {
@@ -475,7 +506,7 @@ export function useDashboardState() {
           void (async () => {
             try {
               const jobsResult = await apiRequest<SyncJobsResponse>(
-                `/dashboard/sync-jobs${getSyncQuery(selectedSyncId)}`,
+                getSyncJobsPath(selectedSyncId),
               );
               setJobs(jobsResult.jobs);
               setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
@@ -489,7 +520,7 @@ export function useDashboardState() {
         return;
       }
               const jobsResult = await apiRequest<SyncJobsResponse>(
-                `/dashboard/sync-jobs${getSyncQuery(selectedSyncId)}`,
+                getSyncJobsPath(selectedSyncId),
               );
       setJobs(jobsResult.jobs);
       setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
@@ -706,7 +737,7 @@ export function useDashboardState() {
     historicalTimerRef.current = window.setTimeout(() => {
       void (async () => {
         try {
-          const jobsResult = await apiRequest<SyncJobsResponse>(`/dashboard/sync-jobs${getSyncQuery(selectedSyncId)}`);
+          const jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(selectedSyncId));
           setJobs(jobsResult.jobs);
           setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
         } catch {
@@ -738,6 +769,7 @@ export function useDashboardState() {
 
   const openSyncDetails = async (syncName?: string, syncId?: number) => {
     const resolvedSyncId = syncId ?? selectedSyncId;
+    clearHistoryFilters();
     if (syncName) {
       setSelectedSyncName(syncName);
     }
@@ -755,7 +787,7 @@ export function useDashboardState() {
           setSyncDirection(sync.syncDirection);
         }
       }
-      const jobsResult = await apiRequest<SyncJobsResponse>(`/dashboard/sync-jobs${getSyncQuery(resolvedSyncId ?? null)}`);
+      const jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(resolvedSyncId ?? null));
       setJobs(jobsResult.jobs);
       setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
       const mappingsResult = await apiRequest<{ mappings: Array<Omit<MappingRow, "id"> & { id: number }> }>(
@@ -795,7 +827,7 @@ export function useDashboardState() {
   }, [connected, syncDefinitions]);
   const refreshSyncHistory = async () => {
     try {
-      const jobsResult = await apiRequest<SyncJobsResponse>(`/dashboard/sync-jobs${getSyncQuery(selectedSyncId)}`);
+      const jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(selectedSyncId));
       setJobs(jobsResult.jobs);
       setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
     } catch {

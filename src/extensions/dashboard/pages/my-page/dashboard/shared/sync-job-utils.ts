@@ -5,13 +5,19 @@ function looksLikeCreateSignal(value: string): boolean {
   if (!normalized) {
     return false;
   }
+  const compact = normalized.replace(/[^a-z0-9]/g, "");
   return (
     normalized.includes("new_contact_was_created") ||
+    normalized.includes("new contact was created") ||
+    normalized.includes("new contact created") ||
     normalized.includes("contact_created") ||
     normalized.includes("contact.creation") ||
     normalized.endsWith(".created") ||
     normalized.endsWith(".creation") ||
-    normalized.includes("contact.create")
+    normalized.includes("contact.create") ||
+    compact.includes("newcontactwascreated") ||
+    compact.includes("newcontactcreated") ||
+    compact.includes("contactcreated")
   );
 }
 
