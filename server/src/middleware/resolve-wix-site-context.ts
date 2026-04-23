@@ -3,6 +3,10 @@ import { env } from "../config/env.js";
 import { getInstanceIdFromPayload, verifyWixSignedInstance } from "../lib/wix-app-instance.js";
 
 export function resolveWixSiteContext(req: Request, res: Response, next: NextFunction): void {
+  if (req.method === "OPTIONS") {
+    next();
+    return;
+  }
   const auth = req.header("authorization")?.trim();
   if (auth && auth.includes(".") && env.WIX_APP_SECRET) {
     const payload = verifyWixSignedInstance(auth, env.WIX_APP_SECRET);
