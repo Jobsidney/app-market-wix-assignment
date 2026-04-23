@@ -26,6 +26,8 @@ const corsOptions: cors.CorsOptions = {
       origin.includes(".wix.com") ||
       origin.includes(".wixsite.com") ||
       origin.includes(".wixstudio.com") ||
+      origin.includes(".wix-host.com") ||
+      origin.includes(".wixapps.net") ||
       origin.includes("localhost")
     ) {
       callback(null, true);
