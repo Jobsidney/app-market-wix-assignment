@@ -36,6 +36,25 @@ export function verifyWixSignedInstance(instance: string, appSecret: string): Re
   }
 }
 
+export function parseWixInstancePayloadUnsigned(instance: string): Record<string, unknown> | null {
+  const dot = instance.indexOf(".");
+  if (dot <= 0 || dot >= instance.length - 1) {
+    return null;
+  }
+  const dataPart = instance.slice(dot + 1);
+  let jsonStr: string;
+  try {
+    jsonStr = b64UrlToBuffer(dataPart).toString("utf8");
+  } catch {
+    return null;
+  }
+  try {
+    return JSON.parse(jsonStr) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export function getInstanceIdFromPayload(payload: Record<string, unknown>): string | null {
   const id = payload.instanceId;
   return typeof id === "string" && id.trim() ? id.trim() : null;

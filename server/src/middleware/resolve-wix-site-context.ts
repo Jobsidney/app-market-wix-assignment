@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { env } from "../config/env.js";
-import { getInstanceIdFromPayload, verifyWixSignedInstance } from "../lib/wix-app-instance.js";
+import { getInstanceIdFromPayload, parseWixInstancePayloadUnsigned, verifyWixSignedInstance } from "../lib/wix-app-instance.js";
 
 export function resolveWixSiteContext(req: Request, res: Response, next: NextFunction): void {
   if (req.method === "OPTIONS") {
@@ -33,6 +33,15 @@ export function resolveWixSiteContext(req: Request, res: Response, next: NextFun
   }
   const headerSite = req.header("x-wix-site-id")?.trim();
   if (!headerSite) {
+    if (auth && auth.includes(".")) {
+      const payload = parseWixInstancePayloadUnsigned(auth);
+      const instanceId = payload ? getInstanceIdFromPayload(payload) : null;
+      if (instanceId) {
+        res.locals.wixSiteId = instanceId;
+        next();
+        return;
+      }
+    }
     res.status(400).json({ error: "Missing x-wix-site-id header" });
     return;
   }
