@@ -295,26 +295,31 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
   const body: Record<string, unknown> = { ...(parsedRawBody ?? {}), ...(requestBody ?? {}) };
   const bodyData = body.data && typeof body.data === "object" ? (body.data as Record<string, unknown>) : null;
   const nestedEvent = parseObjectLikeJson(bodyData?.data) ?? parseObjectLikeJson(body.data);
+  const nestedEventData =
+    (nestedEvent?.data && parseObjectLikeJson(nestedEvent.data)) || parseObjectLikeJson(bodyData?.data);
+  const eventEnvelope = (nestedEventData ?? nestedEvent ?? bodyData ?? {}) as Record<string, unknown>;
   const createdEntity =
-    nestedEvent?.createdEvent &&
-    typeof nestedEvent.createdEvent === "object" &&
-    (nestedEvent.createdEvent as Record<string, unknown>).entity &&
-    typeof (nestedEvent.createdEvent as Record<string, unknown>).entity === "object"
-      ? ((nestedEvent.createdEvent as Record<string, unknown>).entity as Record<string, unknown>)
+    eventEnvelope?.createdEvent &&
+    typeof eventEnvelope.createdEvent === "object" &&
+    (eventEnvelope.createdEvent as Record<string, unknown>).entity &&
+    typeof (eventEnvelope.createdEvent as Record<string, unknown>).entity === "object"
+      ? ((eventEnvelope.createdEvent as Record<string, unknown>).entity as Record<string, unknown>)
       : null;
   const updatedEntity =
-    nestedEvent?.updatedEvent &&
-    typeof nestedEvent.updatedEvent === "object" &&
-    (((nestedEvent.updatedEvent as Record<string, unknown>).entity &&
-      typeof (nestedEvent.updatedEvent as Record<string, unknown>).entity === "object") ||
-      ((nestedEvent.updatedEvent as Record<string, unknown>).currentEntity &&
-        typeof (nestedEvent.updatedEvent as Record<string, unknown>).currentEntity === "object"))
-      ? (((nestedEvent.updatedEvent as Record<string, unknown>).entity ??
-          (nestedEvent.updatedEvent as Record<string, unknown>).currentEntity) as Record<string, unknown>)
+    eventEnvelope?.updatedEvent &&
+    typeof eventEnvelope.updatedEvent === "object" &&
+    (((eventEnvelope.updatedEvent as Record<string, unknown>).entity &&
+      typeof (eventEnvelope.updatedEvent as Record<string, unknown>).entity === "object") ||
+      ((eventEnvelope.updatedEvent as Record<string, unknown>).currentEntity &&
+        typeof (eventEnvelope.updatedEvent as Record<string, unknown>).currentEntity === "object"))
+      ? (((eventEnvelope.updatedEvent as Record<string, unknown>).entity ??
+          (eventEnvelope.updatedEvent as Record<string, unknown>).currentEntity) as Record<string, unknown>)
       : null;
   const enrichedBody: Record<string, unknown> = {
     ...body,
+    ...(bodyData ?? {}),
     ...(nestedEvent ?? {}),
+    ...(nestedEventData ?? {}),
     ...(createdEntity ? { contact: createdEntity } : {}),
     ...(updatedEntity ? { contact: updatedEntity } : {}),
   };
