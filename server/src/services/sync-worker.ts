@@ -48,17 +48,98 @@ function buildWixFallbackHubspotPayload(payload: Record<string, unknown>): Recor
   return fallback;
 }
 
+function getNestedString(source: unknown, path: string): string {
+  if (!source || typeof source !== "object") {
+    return "";
+  }
+  const segments = path.split(".");
+  let current: unknown = source;
+  for (const segment of segments) {
+    if (!current || typeof current !== "object") {
+      return "";
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return typeof current === "string" ? current.trim() : "";
+}
+
+function parseObjectLikeJson(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function extractWixContactId(payload: Record<string, unknown>, fallbackId?: string): string {
+  const bodyData = payload.data && typeof payload.data === "object" ? (payload.data as Record<string, unknown>) : null;
+  const nestedEvent = parseObjectLikeJson(bodyData?.data) ?? parseObjectLikeJson(payload.data);
+  return (
+    pickFirstString(
+      fallbackId,
+      payload.wixContactId,
+      payload.contactId,
+      payload.entityId,
+      bodyData?.wixContactId,
+      bodyData?.entityId,
+      getNestedString(payload, "payload.wixContactId"),
+      getNestedString(payload, "payload.entityId"),
+      getNestedString(payload, "contact.id"),
+      getNestedString(payload, "contact.contactId"),
+      getNestedString(payload, "updatedEvent.currentEntity.id"),
+      getNestedString(payload, "updatedEvent.entity.id"),
+      getNestedString(payload, "createdEvent.currentEntity.id"),
+      getNestedString(payload, "createdEvent.entity.id"),
+      nestedEvent?.entityId,
+      getNestedString(nestedEvent, "updatedEvent.currentEntity.id"),
+      getNestedString(nestedEvent, "updatedEvent.entity.id"),
+      getNestedString(nestedEvent, "createdEvent.currentEntity.id"),
+      getNestedString(nestedEvent, "createdEvent.entity.id"),
+    ) ?? ""
+  );
+}
+
+function summarizePayloadShape(payload: Record<string, unknown>): string {
+  try {
+    const topKeys = Object.keys(payload).slice(0, 20);
+    const dataKeys =
+      payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+        ? Object.keys(payload.data as Record<string, unknown>).slice(0, 20)
+        : [];
+    const nestedDataKeys =
+      payload.data && typeof (payload.data as Record<string, unknown>).data === "string"
+        ? "stringified"
+        : payload.data && typeof (payload.data as Record<string, unknown>).data === "object"
+          ? Object.keys((payload.data as Record<string, unknown>).data as Record<string, unknown>).slice(0, 20).join(",")
+          : "";
+    const preview = JSON.stringify(payload).slice(0, 600);
+    return `keys=[${topKeys.join(",")}] data=[${dataKeys.join(",")}] data.data=[${nestedDataKeys}] preview=${preview}`;
+  } catch {
+    return "payload_unserializable";
+  }
+}
+
 export async function processSyncEvent(event: IncomingEvent): Promise<void> {
-  if (event.source === "wix" && !event.wixContactId?.trim()) {
-    throw new Error("Missing wixContactId in sync event");
+  const resolvedWixContactId = extractWixContactId(event.payload, event.wixContactId);
+  if (event.source === "wix" && !resolvedWixContactId) {
+    const shape = summarizePayloadShape(event.payload);
+    logger.error({ shape, syncId: event.syncId }, "Missing wixContactId in sync event");
+    throw new Error(`Missing wixContactId in sync event (${shape})`);
   }
   if (event.correlationId?.startsWith(env.APP_INTERNAL_ID)) {
-    logger.info({ wixContactId: event.wixContactId }, "Loop prevention: ignored internal correlation id");
+    logger.info({ wixContactId: resolvedWixContactId }, "Loop prevention: ignored internal correlation id");
     return;
   }
 
   const hubspotContactId = event.hubspotContactId?.trim() || undefined;
-  let wixContactId = event.wixContactId?.trim() || "";
+  let wixContactId = resolvedWixContactId;
 
   let mapping = wixContactId ? await getSyncMappingByWixId(wixContactId) : null;
   if (!mapping && hubspotContactId) {
@@ -99,7 +180,7 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
   }
 
   if (event.source === "wix") {
-    const wixId = event.wixContactId!.trim();
+    const wixId = wixContactId;
     let hubspotId = mapping?.hubspotContactId ?? hubspotContactId ?? "";
     hubspotId = await upsertHubspotContact(event.wixSiteId, outbound, hubspotId || undefined);
     await upsertSyncMapping({
