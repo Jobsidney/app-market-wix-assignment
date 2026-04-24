@@ -366,7 +366,13 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
   }
 
   if (!wixId && hubspotContactId) {
-    let created: string | null = await createWixContactFromHubspotPayload(event.wixSiteId, hubspotContactId, outbound);
+    let created: string | null = null;
+    let createFailureMessage = "";
+    try {
+      created = await createWixContactFromHubspotPayload(event.wixSiteId, hubspotContactId, outbound);
+    } catch (error) {
+      createFailureMessage = error instanceof Error ? error.message : "Unknown Wix create error";
+    }
     if (!created) {
       const emailKey = outboundEmailForLookup(outbound);
       if (emailKey) {
@@ -378,7 +384,9 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
     }
     if (!created) {
       throw new Error(
-        "HubSpot→Wix create failed: unable to create Wix contact (check WIX_API_KEY/site permissions and mapped email/name/phone fields)",
+        createFailureMessage
+          ? `HubSpot→Wix create failed: ${createFailureMessage}`
+          : "HubSpot→Wix create failed: unable to create Wix contact (check WIX_API_KEY/site permissions and mapped email/name/phone fields)",
       );
     }
     wixId = created;

@@ -62,6 +62,10 @@ function shouldRetryWithoutAccountId(status: number, bodyText: string): boolean 
   return lowered.includes("metasite_and_account_mismatch") || lowered.includes("meta-site") || lowered.includes("site owning account");
 }
 
+function truncateForLog(value: string, max = 400): string {
+  return value.length > max ? `${value.slice(0, max)}…` : value;
+}
+
 function readStr(obj: unknown, path: string): string | undefined {
   const parts = path.split(".");
   let cur: unknown = obj;
@@ -194,13 +198,11 @@ export async function createWixContactFromHubspotPayload(
   await upsertWixContactShadow(wixSiteId, shadowKey, transformedPayload);
   const primaryHeaders = wixHeaders(wixSiteId, true);
   if (!primaryHeaders) {
-    logger.info({ hubspotContactId }, "WIX_API_KEY unset; HubSpot→Wix create skipped after shadow write");
-    return null;
+    throw new Error("WIX_API_KEY is missing; cannot create Wix contact from HubSpot payload");
   }
   const info = buildWixContactInfoPatch(transformedPayload);
   if (Object.keys(info).length === 0) {
-    logger.warn({ hubspotContactId }, "Cannot create Wix contact: mapped payload has no name, email, or phone");
-    return null;
+    throw new Error("Cannot create Wix contact: mapped payload has no name, email, or phone");
   }
   let res = await fetch(CONTACTS_V4, {
     method: "POST",
@@ -218,7 +220,7 @@ export async function createWixContactFromHubspotPayload(
           body: JSON.stringify({ info, allowDuplicates: true }),
         });
       } else {
-        logger.warn({ hubspotContactId, wixSiteId }, "Wix create retry skipped: missing headers");
+        throw new Error("Wix create retry skipped: missing headers");
       }
     } else {
       const responseHeaders = Object.fromEntries(res.headers.entries());
@@ -232,7 +234,7 @@ export async function createWixContactFromHubspotPayload(
         {
           hubspotContactId,
           status: res.status,
-          text: firstText,
+          text: truncateForLog(firstText),
           wixSiteId,
           hasWixApiKey: Boolean(env.WIX_API_KEY),
           hasWixAccountId: Boolean(env.WIX_ACCOUNT_ID),
@@ -245,7 +247,7 @@ export async function createWixContactFromHubspotPayload(
         },
         "Wix POST create contact failed",
       );
-      return null;
+      throw new Error(`Wix POST create contact failed (${res.status}): ${truncateForLog(firstText)}`);
     }
   }
   if (!res.ok) {
@@ -261,7 +263,7 @@ export async function createWixContactFromHubspotPayload(
       {
         hubspotContactId,
         status: res.status,
-        text,
+        text: truncateForLog(text),
         wixSiteId,
         hasWixApiKey: Boolean(env.WIX_API_KEY),
         hasWixAccountId: Boolean(env.WIX_ACCOUNT_ID),
@@ -274,13 +276,12 @@ export async function createWixContactFromHubspotPayload(
       },
       "Wix POST create contact failed",
     );
-    return null;
+    throw new Error(`Wix POST create contact failed (${res.status}): ${truncateForLog(text)}`);
   }
   const json = (await res.json()) as { contact?: { id?: string } };
   const id = json.contact?.id;
   if (!id) {
-    logger.warn({ hubspotContactId }, "Wix create contact response missing id");
-    return null;
+    throw new Error("Wix create contact response missing id");
   }
   await upsertWixContactShadow(wixSiteId, id, transformedPayload);
   return id;
