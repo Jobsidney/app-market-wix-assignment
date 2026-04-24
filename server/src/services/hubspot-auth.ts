@@ -47,6 +47,12 @@ export async function exchangeAuthCode(code: string, wixSiteId: string): Promise
     typeof tokenHubId !== "undefined" && tokenHubId !== null
       ? String(tokenHubId)
       : await fetchHubspotPortalId(response.accessToken);
+  if (hubspotPortalId) {
+    await db.query(
+      "delete from oauth_installations where hubspot_portal_id = $1 and wix_site_id <> $2",
+      [hubspotPortalId, wixSiteId],
+    );
+  }
   await db.query(
     `insert into oauth_installations (wix_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id)
      values ($1, $2, $3, $4, $5)
