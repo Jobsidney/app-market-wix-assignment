@@ -261,12 +261,16 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
     resolveFromTokenPath(body, body.wixContactId) ||
     readMeaningfulString(body.contactId) ||
     resolveFromTokenPath(body, body.contactId) ||
+    readMeaningfulString(body.entityId) ||
+    resolveFromTokenPath(body, body.entityId) ||
     readNestedString(body, "data.wixContactId") ||
+    readNestedString(body, "data.entityId") ||
     readNestedString(body, "payload.wixContactId") ||
+    readNestedString(body, "payload.entityId") ||
     readNestedString(body, "contact.id") ||
     readNestedString(body, "contact.contactId") ||
     readNestedString(body, "contactDetails.contactId") ||
-    findFirstStringByKeys(body, new Set(["contactid", "wixcontactid"]));
+    findFirstStringByKeys(body, new Set(["contactid", "wixcontactid", "entityid"]));
   if (wixContactId) {
     normalizedPayload.wixContactId = wixContactId;
   }
