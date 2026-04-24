@@ -53,17 +53,40 @@ export async function exchangeAuthCode(code: string, wixSiteId: string): Promise
       [hubspotPortalId, wixSiteId],
     );
   }
-  await db.query(
-    `insert into oauth_installations (wix_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id)
-     values ($1, $2, $3, $4, $5)
-     on conflict (wix_site_id)
-     do update set access_token = excluded.access_token,
-                   refresh_token_encrypted = excluded.refresh_token_encrypted,
-                   expires_at = excluded.expires_at,
-                   hubspot_portal_id = coalesce(excluded.hubspot_portal_id, oauth_installations.hubspot_portal_id),
-                   updated_at = now()`,
-    [wixSiteId, encodeAccessTokenForStorage(response.accessToken), encrypt(response.refreshToken), expiresAt, hubspotPortalId],
-  );
+  const encodedAccessToken = encodeAccessTokenForStorage(response.accessToken);
+  const encryptedRefreshToken = encrypt(response.refreshToken);
+
+  await db.query("begin");
+  try {
+    if (hubspotPortalId) {
+      // Reconnect flow: ensure a single portal maps to one site without violating unique portal index.
+      await db.query("delete from oauth_installations where wix_site_id = $1 or hubspot_portal_id = $2", [
+        wixSiteId,
+        hubspotPortalId,
+      ]);
+      await db.query(
+        `insert into oauth_installations (wix_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id)
+         values ($1, $2, $3, $4, $5)`,
+        [wixSiteId, encodedAccessToken, encryptedRefreshToken, expiresAt, hubspotPortalId],
+      );
+    } else {
+      await db.query(
+        `insert into oauth_installations (wix_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id)
+         values ($1, $2, $3, $4, $5)
+         on conflict (wix_site_id)
+         do update set access_token = excluded.access_token,
+                       refresh_token_encrypted = excluded.refresh_token_encrypted,
+                       expires_at = excluded.expires_at,
+                       hubspot_portal_id = coalesce(excluded.hubspot_portal_id, oauth_installations.hubspot_portal_id),
+                       updated_at = now()`,
+        [wixSiteId, encodedAccessToken, encryptedRefreshToken, expiresAt, hubspotPortalId],
+      );
+    }
+    await db.query("commit");
+  } catch (error) {
+    await db.query("rollback");
+    throw error;
+  }
 }
 
 export async function getValidAccessToken(wixSiteId: string): Promise<string> {
