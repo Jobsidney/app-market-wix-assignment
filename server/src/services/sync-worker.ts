@@ -322,7 +322,7 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
     event.source === "hubspot"
       ? mergeMissingHubspotContactBasics(transformed, sourcePayload)
       : mergeMissingWixContactBasics(transformed, sourcePayload);
-  if (Object.keys(outbound).length === 0 && event.source === "wix") {
+  if (Object.keys(outbound).length === 0) {
     outbound = buildWixFallbackHubspotPayload(sourcePayload);
   }
   if (Object.keys(outbound).length === 0) {
