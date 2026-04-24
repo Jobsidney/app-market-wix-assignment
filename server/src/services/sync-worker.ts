@@ -86,6 +86,43 @@ function mergeMissingHubspotContactBasics(
   return merged;
 }
 
+function mergeMissingWixContactBasics(
+  outbound: Record<string, unknown>,
+  sourcePayload: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...outbound };
+  const outboundEmail = pickFirstString(merged.email, merged.primaryEmail);
+  const outboundFirstName = pickFirstString(merged.firstname, merged.firstName);
+  const outboundLastName = pickFirstString(merged.lastname, merged.lastName);
+  const outboundPhone = pickFirstString(merged.phone, merged.mobilePhone);
+
+  if (!outboundEmail) {
+    const fallbackEmail = pickFirstString(sourcePayload.email, sourcePayload.primaryEmail);
+    if (fallbackEmail) {
+      merged.email = fallbackEmail;
+    }
+  }
+  if (!outboundFirstName) {
+    const fallbackFirstName = pickFirstString(sourcePayload.firstName, sourcePayload.firstname);
+    if (fallbackFirstName) {
+      merged.firstname = fallbackFirstName;
+    }
+  }
+  if (!outboundLastName) {
+    const fallbackLastName = pickFirstString(sourcePayload.lastName, sourcePayload.lastname);
+    if (fallbackLastName) {
+      merged.lastname = fallbackLastName;
+    }
+  }
+  if (!outboundPhone) {
+    const fallbackPhone = pickFirstString(sourcePayload.phone, sourcePayload.mobilePhone);
+    if (fallbackPhone) {
+      merged.phone = fallbackPhone;
+    }
+  }
+  return merged;
+}
+
 function getNestedString(source: unknown, path: string): string {
   if (!source || typeof source !== "object") {
     return "";
@@ -264,16 +301,12 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
   let outbound =
     event.source === "hubspot"
       ? mergeMissingHubspotContactBasics(transformed, sourcePayload)
-      : transformed;
+      : mergeMissingWixContactBasics(transformed, sourcePayload);
   if (Object.keys(outbound).length === 0 && event.source === "wix") {
     outbound = buildWixFallbackHubspotPayload(sourcePayload);
   }
   if (Object.keys(outbound).length === 0) {
-    logger.info(
-      { wixSiteId: event.wixSiteId, wixContactId, hubspotContactId, source: event.source },
-      "No mapped fields after persisted mappings; skipping",
-    );
-    return;
+    throw new Error(`No mapped fields available for ${event.source} sync event`);
   }
 
   if (event.currentRemoteState && deepEqual(outbound, event.currentRemoteState)) {
@@ -320,8 +353,7 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
   } else if (wixId) {
     wixId = await applyInboundHubspotToWixContact(event.wixSiteId, wixId, outbound);
   } else {
-    logger.warn({ payloadKeys: Object.keys(event.payload) }, "HubSpot→Wix: missing wixContactId and hubspotContactId");
-    return;
+    throw new Error("HubSpot→Wix event missing both wixContactId and hubspotContactId");
   }
 
   if (hubspotContactId) {

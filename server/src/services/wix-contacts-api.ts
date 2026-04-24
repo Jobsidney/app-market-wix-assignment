@@ -188,18 +188,15 @@ export async function applyInboundHubspotToWixContact(
   await upsertWixContactShadow(wixSiteId, wixContactId, transformedPayload);
   const headers = wixHeaders(wixSiteId);
   if (!headers) {
-    logger.info({ wixContactId }, "WIX_API_KEY unset; HubSpot→Wix applied to shadow store only");
-    return wixContactId;
+    throw new Error("WIX_API_KEY is missing; cannot apply HubSpot→Wix update");
   }
   const info = buildWixContactInfoPatch(transformedPayload);
   if (Object.keys(info).length === 0) {
-    logger.info({ wixContactId }, "No Wix ContactInfo fields derived from mapping; shadow only");
-    return wixContactId;
+    throw new Error("No Wix ContactInfo fields derived for HubSpot→Wix update");
   }
   const revision = await fetchContactRevision(wixSiteId, wixContactId);
   if (revision === null) {
-    logger.warn({ wixContactId }, "Could not read Wix contact revision; shadow only");
-    return wixContactId;
+    throw new Error(`Could not read Wix contact revision for ${wixContactId}`);
   }
   const res = await fetch(`${CONTACTS_V4}/${encodeURIComponent(wixContactId)}`, {
     method: "PATCH",
@@ -208,7 +205,7 @@ export async function applyInboundHubspotToWixContact(
   });
   if (!res.ok) {
     const text = await res.text();
-    logger.warn({ wixContactId, status: res.status, text }, "Wix PATCH contact failed");
+    throw new Error(`Wix PATCH contact failed (${res.status}): ${text}`);
   }
   return wixContactId;
 }
