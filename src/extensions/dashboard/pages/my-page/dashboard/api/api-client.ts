@@ -37,13 +37,29 @@ function getWixSignedInstanceFromUrl(): string | null {
   if (typeof window === "undefined") {
     return null;
   }
+  const siteIdFromPath = getWixSiteIdFromUrl();
   const fromUrl = new URLSearchParams(window.location.search).get("instance");
   if (fromUrl && fromUrl.trim()) {
-    window.sessionStorage.setItem(INSTANCE_STORAGE_KEY, fromUrl.trim());
-    return fromUrl.trim();
+    const normalized = fromUrl.trim();
+    const siteIdFromUrlInstance = getWixSiteIdFromInstance(normalized);
+    if (siteIdFromPath && siteIdFromUrlInstance && siteIdFromPath !== siteIdFromUrlInstance) {
+      window.sessionStorage.removeItem(INSTANCE_STORAGE_KEY);
+      return null;
+    }
+    window.sessionStorage.setItem(INSTANCE_STORAGE_KEY, normalized);
+    return normalized;
   }
   const fromStorage = window.sessionStorage.getItem(INSTANCE_STORAGE_KEY);
-  return fromStorage && fromStorage.trim() ? fromStorage.trim() : null;
+  if (!fromStorage || !fromStorage.trim()) {
+    return null;
+  }
+  const normalized = fromStorage.trim();
+  const siteIdFromStoredInstance = getWixSiteIdFromInstance(normalized);
+  if (siteIdFromPath && siteIdFromStoredInstance && siteIdFromPath !== siteIdFromStoredInstance) {
+    window.sessionStorage.removeItem(INSTANCE_STORAGE_KEY);
+    return null;
+  }
+  return normalized;
 }
 
 function getWixSiteIdFromUrl(): string | null {
