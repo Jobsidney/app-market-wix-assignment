@@ -94,7 +94,7 @@ app.use("/webhooks", (req, res, next) => {
       const text = raw.toString("utf8").trim();
       try {
         const parsed: unknown = JSON.parse(text);
-        req.body = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+        req.body = parsed && typeof parsed === "object" ? parsed : {};
       } catch {
         req.body = {};
       }
