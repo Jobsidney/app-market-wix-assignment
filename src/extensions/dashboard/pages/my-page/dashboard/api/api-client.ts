@@ -37,29 +37,13 @@ function getWixSignedInstanceFromUrl(): string | null {
   if (typeof window === "undefined") {
     return null;
   }
-  const siteIdFromPath = getWixSiteIdFromUrl();
   const fromUrl = new URLSearchParams(window.location.search).get("instance");
   if (fromUrl && fromUrl.trim()) {
-    const normalized = fromUrl.trim();
-    const siteIdFromUrlInstance = getWixSiteIdFromInstance(normalized);
-    if (siteIdFromPath && siteIdFromUrlInstance && siteIdFromPath !== siteIdFromUrlInstance) {
-      window.sessionStorage.removeItem(INSTANCE_STORAGE_KEY);
-      return null;
-    }
-    window.sessionStorage.setItem(INSTANCE_STORAGE_KEY, normalized);
-    return normalized;
+    window.sessionStorage.setItem(INSTANCE_STORAGE_KEY, fromUrl.trim());
+    return fromUrl.trim();
   }
   const fromStorage = window.sessionStorage.getItem(INSTANCE_STORAGE_KEY);
-  if (!fromStorage || !fromStorage.trim()) {
-    return null;
-  }
-  const normalized = fromStorage.trim();
-  const siteIdFromStoredInstance = getWixSiteIdFromInstance(normalized);
-  if (siteIdFromPath && siteIdFromStoredInstance && siteIdFromPath !== siteIdFromStoredInstance) {
-    window.sessionStorage.removeItem(INSTANCE_STORAGE_KEY);
-    return null;
-  }
-  return normalized;
+  return fromStorage && fromStorage.trim() ? fromStorage.trim() : null;
 }
 
 function getWixSiteIdFromUrl(): string | null {
@@ -69,6 +53,27 @@ function getWixSiteIdFromUrl(): string | null {
   const match = window.location.pathname.match(/\/dashboard\/([^/]+)/);
   return match?.[1] ?? null;
 }
+
+function getScopedInstanceForCurrentSite(pathSiteId: string | null): string | null {
+  const instance = getWixSignedInstanceFromUrl();
+  if (!instance) {
+    return null;
+  }
+  if (!pathSiteId) {
+    return instance;
+  }
+  const instanceSiteId = getWixSiteIdFromInstance(instance);
+  if (!instanceSiteId) {
+    return instance;
+  }
+  if (instanceSiteId === pathSiteId) {
+    return instance;
+  }
+  if (typeof window !== "undefined") {
+    window.sessionStorage.removeItem(INSTANCE_STORAGE_KEY);
+  }
+  return null;
+}
 const apiBase =
   configuredApiBase && configuredApiBase.length > 0
     ? configuredApiBase
@@ -77,8 +82,9 @@ const apiBase =
       : "https://app-market-wix-assignment-production.up.railway.app";
 
 export async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
-  const instance = getWixSignedInstanceFromUrl();
-  const wixSiteId = getWixSiteIdFromInstance(instance) || getWixSiteIdFromUrl() || defaultWixSiteId;
+  const pathSiteId = getWixSiteIdFromUrl();
+  const instance = getScopedInstanceForCurrentSite(pathSiteId);
+  const wixSiteId = pathSiteId || getWixSiteIdFromInstance(instance) || defaultWixSiteId;
   const response = await fetch(`${apiBase}${path}`, {
     ...options,
     cache: "no-store",
