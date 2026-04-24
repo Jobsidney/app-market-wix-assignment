@@ -1,4 +1,5 @@
 import { Client } from "@hubspot/api-client";
+import { logger } from "../lib/logger.js";
 import { getValidAccessToken } from "./hubspot-auth.js";
 import { getHubspotProperties } from "./hubspot-properties-cache.js";
 
@@ -96,4 +97,33 @@ export async function upsertHubspotContact(
   }
   const created = await client.crm.contacts.basicApi.create({ properties: normalized });
   return created.id;
+}
+
+export async function getHubspotContactProperties(
+  wixSiteId: string,
+  hubspotContactId: string,
+  properties: string[],
+): Promise<Record<string, unknown> | null> {
+  const accessToken = await getValidAccessToken(wixSiteId);
+  const client = new Client({ accessToken });
+  const requested = Array.from(
+    new Set(
+      properties
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    ),
+  );
+  try {
+    const contact = await client.crm.contacts.basicApi.getById(
+      hubspotContactId,
+      requested.length > 0 ? requested : undefined,
+      undefined,
+      undefined,
+      false,
+    );
+    return { ...(contact.properties ?? {}), hubspotContactId: contact.id };
+  } catch (error) {
+    logger.warn({ hubspotContactId, error }, "HubSpot GET contact failed for webhook enrichment");
+    return null;
+  }
 }

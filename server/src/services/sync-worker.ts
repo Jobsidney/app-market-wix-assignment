@@ -4,7 +4,7 @@ import { deepEqual } from "./idempotency.js";
 import { listFieldMappings } from "./field-mapping-repo.js";
 import { getSyncMappingByHubspotId, getSyncMappingByWixId, upsertSyncMapping } from "./sync-mapping-repo.js";
 import { transformByPersistedMappings } from "./mapping-transformer.js";
-import { upsertHubspotContact } from "./hubspot-contacts.js";
+import { getHubspotContactProperties, upsertHubspotContact } from "./hubspot-contacts.js";
 import {
   applyInboundHubspotToWixContact,
   createWixContactFromHubspotPayload,
@@ -202,14 +202,30 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
   }
 
   const fieldRows = await listFieldMappings(event.wixSiteId, event.syncId);
+  let sourcePayload = event.payload;
+  if (event.source === "hubspot" && hubspotContactId) {
+    const requestedProps = Array.from(
+      new Set([
+        ...fieldRows.map((row) => row.hubspotField),
+        "email",
+        "firstname",
+        "lastname",
+        "phone",
+      ]),
+    );
+    const enriched = await getHubspotContactProperties(event.wixSiteId, hubspotContactId, requestedProps);
+    if (enriched) {
+      sourcePayload = { ...enriched, ...event.payload };
+    }
+  }
   const transformed =
     event.source === "wix"
-      ? transformByPersistedMappings(event.payload, fieldRows, "wix_to_hubspot")
-      : transformByPersistedMappings(event.payload, fieldRows, "hubspot_to_wix");
+      ? transformByPersistedMappings(sourcePayload, fieldRows, "wix_to_hubspot")
+      : transformByPersistedMappings(sourcePayload, fieldRows, "hubspot_to_wix");
 
   let outbound = transformed;
   if (Object.keys(outbound).length === 0 && event.source === "wix") {
-    outbound = buildWixFallbackHubspotPayload(event.payload);
+    outbound = buildWixFallbackHubspotPayload(sourcePayload);
   }
   if (Object.keys(outbound).length === 0) {
     logger.info(
