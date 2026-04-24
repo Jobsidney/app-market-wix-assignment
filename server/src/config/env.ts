@@ -21,6 +21,8 @@ const envSchema = z.object({
   WIX_API_KEY: z.string().optional(),
   /** Optional explicit Wix account id for account-level API key requests. */
   WIX_ACCOUNT_ID: z.string().optional(),
+  /** Optional hard lock for OAuth/site routing to a single Wix site id. */
+  WIX_CANONICAL_SITE_ID: z.string().uuid().optional(),
   /** App secret from the Wix app OAuth page; when set, dashboard/mappings/connection require `Authorization: <signed instance>`. */
   WIX_APP_SECRET: z.string().optional(),
   /**

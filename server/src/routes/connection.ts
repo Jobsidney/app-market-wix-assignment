@@ -23,7 +23,8 @@ connectionRouter.get("/status", async (_req, res, next) => {
 });
 
 connectionRouter.get("/authorize-url", (_req, res) => {
-  const wixSiteId = res.locals.wixSiteId as string;
+  const resolvedSiteId = res.locals.wixSiteId as string;
+  const wixSiteId = env.WIX_CANONICAL_SITE_ID?.trim() || resolvedSiteId;
   const redirectUri = encodeURIComponent(env.HUBSPOT_REDIRECT_URI);
   const scopes = encodeURIComponent("crm.objects.contacts.read crm.objects.contacts.write oauth");
   const url = `https://app.hubspot.com/oauth/authorize?client_id=${env.HUBSPOT_CLIENT_ID}&redirect_uri=${redirectUri}&scope=${scopes}&state=${encodeURIComponent(wixSiteId)}`;
