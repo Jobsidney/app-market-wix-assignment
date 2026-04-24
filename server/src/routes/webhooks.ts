@@ -288,10 +288,11 @@ async function resolveWixSiteIdForSync(
 
 async function handleWixContactWebhook(req: Request, res: Response): Promise<void> {
   const parsedRawBody = parseRawWebhookBody(req);
-  const body =
+  const requestBody =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
       ? (req.body as Record<string, unknown>)
-      : (parsedRawBody ?? {});
+      : null;
+  const body: Record<string, unknown> = { ...(parsedRawBody ?? {}), ...(requestBody ?? {}) };
   const bodyData = body.data && typeof body.data === "object" ? (body.data as Record<string, unknown>) : null;
   const nestedEvent = parseObjectLikeJson(bodyData?.data) ?? parseObjectLikeJson(body.data);
   const createdEntity =
