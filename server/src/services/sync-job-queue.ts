@@ -87,10 +87,10 @@ function extractSyncEventContactPayload(envelope: Record<string, unknown>): Reco
 }
 
 function optTrimmedString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
     return undefined;
   }
-  const t = value.trim();
+  const t = String(value).trim();
   return t.length > 0 ? t : undefined;
 }
 

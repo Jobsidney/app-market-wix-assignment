@@ -476,7 +476,10 @@ async function handleHubspotContactWebhook(req: Request, res: Response): Promise
   );
   const payload: Record<string, unknown> = {
     source: "hubspot",
-    hubspotContactId: event.objectId ?? event.object_id ?? undefined,
+    hubspotContactId:
+      event.objectId !== undefined || event.object_id !== undefined
+        ? String(event.objectId ?? event.object_id).trim()
+        : undefined,
     updatedAt: event.occurredAt ?? event.occurred_at ?? undefined,
     hubspotPortalId: portalId,
   };
