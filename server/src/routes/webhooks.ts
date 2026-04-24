@@ -11,6 +11,7 @@ import { db } from "../lib/db.js";
 export const webhooksRouter = Router();
 
 type SyncSource = "wix" | "hubspot";
+type RequestWithRawBody = Request & { rawBody?: Buffer };
 
 function readString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -170,6 +171,40 @@ function parseObjectLikeJson(value: unknown): Record<string, unknown> | null {
   }
 }
 
+function parseBase64UrlJson(value: string): Record<string, unknown> | null {
+  try {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = Buffer.from(padded, "base64").toString("utf8");
+    return parseObjectLikeJson(decoded);
+  } catch {
+    return null;
+  }
+}
+
+function parseRawWebhookBody(req: Request): Record<string, unknown> | null {
+  const raw = (req as RequestWithRawBody).rawBody;
+  if (!raw || raw.length === 0) {
+    return null;
+  }
+  const rawText = raw.toString("utf8").trim();
+  if (!rawText) {
+    return null;
+  }
+  const asJson = parseObjectLikeJson(rawText);
+  if (asJson) {
+    return asJson;
+  }
+  const jwtParts = rawText.split(".");
+  if (jwtParts.length === 3) {
+    const payload = parseBase64UrlJson(jwtParts[1] ?? "");
+    if (payload) {
+      return payload;
+    }
+  }
+  return null;
+}
+
 async function enqueueIncomingEvent(
   req: Request,
   res: Response,
@@ -252,9 +287,13 @@ async function resolveWixSiteIdForSync(
 }
 
 async function handleWixContactWebhook(req: Request, res: Response): Promise<void> {
-  const body = (req.body as Record<string, unknown>) ?? {};
+  const parsedRawBody = parseRawWebhookBody(req);
+  const body =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? (req.body as Record<string, unknown>)
+      : (parsedRawBody ?? {});
   const bodyData = body.data && typeof body.data === "object" ? (body.data as Record<string, unknown>) : null;
-  const nestedEvent = parseObjectLikeJson(bodyData?.data);
+  const nestedEvent = parseObjectLikeJson(bodyData?.data) ?? parseObjectLikeJson(body.data);
   const createdEntity =
     nestedEvent?.createdEvent &&
     typeof nestedEvent.createdEvent === "object" &&
