@@ -289,11 +289,13 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
     }
   }
 
-  const eventUpdatedAt = event.updatedAt ? new Date(event.updatedAt).getTime() : Date.now();
-  const lastSyncedAt = mapping ? new Date(mapping.lastSyncedAt).getTime() : 0;
-  if (lastSyncedAt && eventUpdatedAt <= lastSyncedAt) {
-    logger.info({ wixContactId: wixContactId || hubspotContactId }, "Conflict handling: skipped older event");
-    return;
+  if (event.source === "wix") {
+    const eventUpdatedAt = event.updatedAt ? new Date(event.updatedAt).getTime() : Date.now();
+    const lastSyncedAt = mapping ? new Date(mapping.lastSyncedAt).getTime() : 0;
+    if (lastSyncedAt && eventUpdatedAt <= lastSyncedAt) {
+      logger.info({ wixContactId: wixContactId || hubspotContactId }, "Conflict handling: skipped older Wix-originated event");
+      return;
+    }
   }
 
   const fieldRows = await listFieldMappings(event.wixSiteId, event.syncId);
@@ -322,7 +324,7 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
     event.source === "hubspot"
       ? mergeMissingHubspotContactBasics(transformed, sourcePayload)
       : mergeMissingWixContactBasics(transformed, sourcePayload);
-  if (Object.keys(outbound).length === 0) {
+  if (Object.keys(outbound).length === 0 && event.source === "wix") {
     outbound = buildWixFallbackHubspotPayload(sourcePayload);
   }
   if (Object.keys(outbound).length === 0) {

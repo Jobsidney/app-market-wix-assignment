@@ -5,9 +5,8 @@ import { getSiteSyncLiveEnabled } from "../services/site-sync-state-repo.js";
 import { verifyWebhookHmac } from "../middleware/verify-webhook-hmac.js";
 import { verifyHubspotSignature } from "../middleware/verify-hubspot-signature.js";
 import { resolveWixSiteIdByHubspotPortalId } from "../services/hubspot-auth.js";
-import { getDefaultSyncId, listSyncDefinitions } from "../services/sync-definitions-repo.js";
+import { listSyncDefinitions } from "../services/sync-definitions-repo.js";
 import { db } from "../lib/db.js";
-import { logger } from "../lib/logger.js";
 
 export const webhooksRouter = Router();
 
@@ -206,16 +205,13 @@ function parseRawWebhookBody(req: Request): Record<string, unknown> | null {
   return null;
 }
 
-type IncomingEnqueuePlan =
-  | { kind: "paused" }
-  | { kind: "ready"; resolvedWixSiteId: string; targetSyncIds: number[]; body: Record<string, unknown>; source: SyncSource };
-
-async function resolveIncomingEnqueuePlan(
+async function enqueueIncomingEvent(
   req: Request,
+  res: Response,
   source: SyncSource,
   wixSiteId: string,
   body: Record<string, unknown>,
-): Promise<IncomingEnqueuePlan> {
+): Promise<void> {
   const syncIdQuery = typeof req.query.syncId === "string" ? Number(req.query.syncId) : NaN;
   const syncIdBody = typeof body.syncId === "number" ? body.syncId : Number(body.syncId ?? NaN);
   const explicitSyncId = Number.isFinite(syncIdBody)
@@ -225,60 +221,25 @@ async function resolveIncomingEnqueuePlan(
       : undefined;
   const resolvedWixSiteId = await resolveWixSiteIdForSync(wixSiteId, explicitSyncId);
   if (!(await getSiteSyncLiveEnabled(resolvedWixSiteId))) {
-    return { kind: "paused" };
+    res.status(200).json({ accepted: true, skipped: "sync_paused" });
+    return;
   }
   const targetSyncIds = await resolveTargetSyncIds(resolvedWixSiteId, explicitSyncId, source);
-  return { kind: "ready", resolvedWixSiteId, targetSyncIds, body, source };
-}
-
-async function executeIncomingEnqueuePlan(plan: Extract<IncomingEnqueuePlan, { kind: "ready" }>): Promise<void> {
+  if (targetSyncIds.length === 0) {
+    res.status(200).json({ accepted: true, skipped: "no_live_compatible_sync", syncTargets: 0 });
+    return;
+  }
+  res.status(200).json({ accepted: true, syncTargets: targetSyncIds.length });
   await Promise.all(
-    plan.targetSyncIds.map((syncId) =>
+    targetSyncIds.map((syncId) =>
       enqueueJob(
-        plan.resolvedWixSiteId,
+        resolvedWixSiteId,
         "sync_event",
-        { ...plan.body, source: plan.source, syncId },
+        { ...body, source, syncId },
         syncId,
       ),
     ),
   );
-}
-
-async function enqueueIncomingEvent(
-  req: Request,
-  res: Response,
-  source: SyncSource,
-  wixSiteId: string,
-  body: Record<string, unknown>,
-): Promise<void> {
-  const plan = await resolveIncomingEnqueuePlan(req, source, wixSiteId, body);
-  if (plan.kind === "paused") {
-    res.status(200).json({ accepted: true, skipped: "sync_paused" });
-    return;
-  }
-  res.status(200).json({ accepted: true, syncTargets: plan.targetSyncIds.length });
-  await executeIncomingEnqueuePlan(plan);
-}
-
-function normalizeHubspotPortalId(event: Record<string, unknown>): string {
-  const raw = event.portalId ?? event.portal_id;
-  if (raw === undefined || raw === null) {
-    return "";
-  }
-  return String(raw).trim();
-}
-
-function extractHubspotContactObjectId(event: Record<string, unknown>): string {
-  const fromObject =
-    event.object && typeof event.object === "object" && !Array.isArray(event.object)
-      ? ((event.object as Record<string, unknown>).objectId ??
-          (event.object as Record<string, unknown>).object_id) as unknown
-      : undefined;
-  const raw = event.objectId ?? event.object_id ?? fromObject;
-  if (raw === undefined || raw === null) {
-    return "";
-  }
-  return String(raw).trim();
 }
 
 async function resolveTargetSyncIds(
@@ -309,7 +270,7 @@ async function resolveTargetSyncIds(
   if (liveSyncIds.length > 0) {
     return liveSyncIds;
   }
-  return [await getDefaultSyncId(wixSiteId)];
+  return [];
 }
 
 async function resolveWixSiteIdForSync(
@@ -498,71 +459,54 @@ async function handleHubspotContactWebhook(req: Request, res: Response): Promise
     res.status(400).json({ error: "HubSpot webhook payload must be a non-empty array" });
     return;
   }
-  const batchResults: Array<{
-    hubspotContactId?: string;
-    skipped?: string;
-    syncTargets?: number;
-    subscriptionType?: string;
-  }> = [];
-  for (const raw of body) {
-    if (!raw || typeof raw !== "object") {
-      continue;
-    }
-    const event = raw as Record<string, unknown>;
-    const portalId = normalizeHubspotPortalId(event);
-    if (!portalId) {
-      logger.warn({ keys: Object.keys(event) }, "HubSpot webhook item missing portalId; skipping");
-      continue;
-    }
-    const wixSiteId = await resolveWixSiteIdByHubspotPortalId(portalId);
-    if (!wixSiteId) {
-      res.status(404).json({ error: "No Wix installation mapped for incoming HubSpot portal" });
-      return;
-    }
-    await db.query(
-      `update oauth_installations
-         set hubspot_portal_id = $2,
-             updated_at = now()
-       where wix_site_id = $1
-         and (hubspot_portal_id is distinct from $2)`,
-      [wixSiteId, portalId],
-    );
-    const hubspotContactId = extractHubspotContactObjectId(event);
-    const subscriptionType = typeof event.subscriptionType === "string" ? event.subscriptionType : "";
-    if (!hubspotContactId) {
-      if (subscriptionType.startsWith("contact.")) {
-        logger.warn({ subscriptionType, portalId }, "HubSpot contact webhook missing objectId; skipping item");
-      }
-      continue;
-    }
-    const payload: Record<string, unknown> = {
-      hubspotContactId,
-      updatedAt: event.occurredAt ?? event.occurred_at ?? undefined,
-      hubspotPortalId: portalId,
-    };
-    const eventSyncId =
-      typeof event.syncId === "number"
-        ? event.syncId
-        : typeof event.sync_id === "number"
-          ? event.sync_id
-          : Number(event.syncId ?? event.sync_id ?? NaN);
-    if (Number.isFinite(eventSyncId)) {
-      payload.syncId = Number(eventSyncId);
-    }
-    const propertyName = typeof event.propertyName === "string" ? event.propertyName : undefined;
-    const propertyValue = event.propertyValue;
-    if (propertyName && propertyValue !== undefined) {
-      payload[propertyName] = propertyValue;
-    }
-    const plan = await resolveIncomingEnqueuePlan(req, "hubspot", wixSiteId, payload);
-    if (plan.kind === "paused") {
-      batchResults.push({ hubspotContactId, skipped: "sync_paused", subscriptionType });
-      continue;
-    }
-    batchResults.push({ hubspotContactId, syncTargets: plan.targetSyncIds.length, subscriptionType });
-    await executeIncomingEnqueuePlan(plan);
+  const first = body[0];
+  if (!first || typeof first !== "object") {
+    res.status(400).json({ error: "Invalid HubSpot webhook payload item" });
+    return;
   }
-  res.status(200).json({ accepted: true, processed: batchResults.length, results: batchResults });
+  const event = first as Record<string, unknown>;
+  const portalId = String(event.portalId ?? event.portal_id ?? "").trim();
+  if (!portalId) {
+    res.status(400).json({ error: "Missing portalId in HubSpot webhook payload" });
+    return;
+  }
+  const wixSiteId = await resolveWixSiteIdByHubspotPortalId(portalId);
+  if (!wixSiteId) {
+    res.status(404).json({ error: "No Wix installation mapped for incoming HubSpot portal" });
+    return;
+  }
+  await db.query(
+    `update oauth_installations
+       set hubspot_portal_id = $2,
+           updated_at = now()
+     where wix_site_id = $1
+       and (hubspot_portal_id is distinct from $2)`,
+    [wixSiteId, portalId],
+  );
+  const payload: Record<string, unknown> = {
+    source: "hubspot",
+    hubspotContactId:
+      event.objectId !== undefined || event.object_id !== undefined
+        ? String(event.objectId ?? event.object_id).trim()
+        : undefined,
+    updatedAt: event.occurredAt ?? event.occurred_at ?? undefined,
+    hubspotPortalId: portalId,
+  };
+  const eventSyncId =
+    typeof event.syncId === "number"
+      ? event.syncId
+      : typeof event.sync_id === "number"
+        ? event.sync_id
+        : Number(event.syncId ?? event.sync_id ?? NaN);
+  if (Number.isFinite(eventSyncId)) {
+    payload.syncId = Number(eventSyncId);
+  }
+  const propertyName = typeof event.propertyName === "string" ? event.propertyName : undefined;
+  const propertyValue = event.propertyValue;
+  if (propertyName && propertyValue !== undefined) {
+    payload[propertyName] = propertyValue;
+  }
+  await enqueueIncomingEvent(req, res, "hubspot", wixSiteId, payload);
 }
 
 webhooksRouter.post("/wix/contact-updated", async (req, res, next) => {
