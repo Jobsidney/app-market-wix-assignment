@@ -115,6 +115,11 @@ async function fetchContactRevision(wixSiteId: string, contactId: string): Promi
   return typeof rev === "number" ? rev : null;
 }
 
+export async function hasWixContact(wixSiteId: string, contactId: string): Promise<boolean> {
+  const revision = await fetchContactRevision(wixSiteId, contactId);
+  return revision !== null;
+}
+
 export async function createWixContactFromHubspotPayload(
   wixSiteId: string,
   hubspotContactId: string,

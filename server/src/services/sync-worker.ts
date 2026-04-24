@@ -8,6 +8,7 @@ import { getHubspotContactProperties, upsertHubspotContact } from "./hubspot-con
 import {
   applyInboundHubspotToWixContact,
   createWixContactFromHubspotPayload,
+  hasWixContact,
 } from "./wix-contacts-api.js";
 
 interface IncomingEvent {
@@ -256,6 +257,17 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
 
   let wixId = wixContactId;
   let hubspotId = mapping?.hubspotContactId ?? hubspotContactId ?? "";
+
+  if (wixId) {
+    const contactExistsOnCurrentSite = await hasWixContact(event.wixSiteId, wixId);
+    if (!contactExistsOnCurrentSite) {
+      logger.warn(
+        { wixId, hubspotContactId, wixSiteId: event.wixSiteId },
+        "HubSpot→Wix: mapped Wix contact not found on current site; falling back to create",
+      );
+      wixId = "";
+    }
+  }
 
   if (!wixId && hubspotContactId) {
     const created = await createWixContactFromHubspotPayload(event.wixSiteId, hubspotContactId, outbound);
