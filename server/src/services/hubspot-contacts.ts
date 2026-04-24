@@ -26,7 +26,7 @@ function normalizeEmail(raw: string): string | null {
   const embedded = trimmed.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
   return embedded ? embedded[0].toLowerCase() : null;
 }
-
+//changes
 function toStringRecord(input: Record<string, unknown>): HubspotProps {
   const out: HubspotProps = {};
   for (const [key, value] of Object.entries(input)) {
