@@ -2,12 +2,18 @@ import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 import { deepEqual } from "./idempotency.js";
 import { listFieldMappings } from "./field-mapping-repo.js";
-import { getSyncMappingByHubspotId, getSyncMappingByWixId, upsertSyncMapping } from "./sync-mapping-repo.js";
+import {
+  deleteSyncMappingByWixContactId,
+  getSyncMappingByHubspotId,
+  getSyncMappingByWixId,
+  upsertSyncMapping,
+} from "./sync-mapping-repo.js";
 import { transformByPersistedMappings } from "./mapping-transformer.js";
 import { getHubspotContactProperties, upsertHubspotContact } from "./hubspot-contacts.js";
 import {
   applyInboundHubspotToWixContact,
   createWixContactFromHubspotPayload,
+  findWixContactIdByPrimaryEmail,
   hasWixContact,
 } from "./wix-contacts-api.js";
 
@@ -239,6 +245,20 @@ function extractWixContactId(payload: Record<string, unknown>, fallbackId?: stri
   return "";
 }
 
+function outboundEmailForLookup(outbound: Record<string, unknown>): string | undefined {
+  if (typeof outbound.email === "string" && outbound.email.trim()) {
+    return outbound.email.trim().toLowerCase();
+  }
+  const primary = outbound.primaryInfo;
+  if (primary && typeof primary === "object" && !Array.isArray(primary)) {
+    const e = (primary as Record<string, unknown>).email;
+    if (typeof e === "string" && e.trim()) {
+      return e.trim().toLowerCase();
+    }
+  }
+  return undefined;
+}
+
 export async function processSyncEvent(event: IncomingEvent): Promise<void> {
   const resolvedWixContactId = extractWixContactId(event.payload, event.wixContactId);
   if (event.source === "wix" && !resolvedWixContactId) {
@@ -336,14 +356,24 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
     if (!contactExistsOnCurrentSite) {
       logger.warn(
         { wixId, hubspotContactId, wixSiteId: event.wixSiteId },
-        "HubSpot→Wix: mapped Wix contact not found on current site; falling back to create",
+        "HubSpot→Wix: mapped Wix contact not found on current site; clearing stale mapping and falling back to create or link-by-email",
       );
+      await deleteSyncMappingByWixContactId(wixId);
       wixId = "";
     }
   }
 
   if (!wixId && hubspotContactId) {
-    const created = await createWixContactFromHubspotPayload(event.wixSiteId, hubspotContactId, outbound);
+    let created: string | null = await createWixContactFromHubspotPayload(event.wixSiteId, hubspotContactId, outbound);
+    if (!created) {
+      const emailKey = outboundEmailForLookup(outbound);
+      if (emailKey) {
+        const existingId = await findWixContactIdByPrimaryEmail(event.wixSiteId, emailKey);
+        if (existingId) {
+          created = await applyInboundHubspotToWixContact(event.wixSiteId, existingId, outbound);
+        }
+      }
+    }
     if (!created) {
       throw new Error(
         "HubSpot→Wix create failed: unable to create Wix contact (check WIX_API_KEY/site permissions and mapped email/name/phone fields)",

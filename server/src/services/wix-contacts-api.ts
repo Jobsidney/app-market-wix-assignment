@@ -3,6 +3,7 @@ import { logger } from "../lib/logger.js";
 import { upsertWixContactShadow } from "./wix-contacts-shadow.js";
 
 const CONTACTS_V4 = "https://www.wixapis.com/contacts/v4/contacts";
+const CONTACTS_QUERY_V4 = "https://www.wixapis.com/contacts/v4/contacts/query";
 
 function parseObjectLikeJson(value: string): Record<string, unknown> | null {
   try {
@@ -122,12 +123,15 @@ async function fetchContactRevision(wixSiteId: string, contactId: string): Promi
         res = await fetch(`${CONTACTS_V4}/${encodeURIComponent(contactId)}`, { method: "GET", headers: retryHeaders });
       }
     } else {
-      logger.warn({ contactId, status: res.status }, "Wix GET contact failed");
+      const snippet = text.length > 400 ? `${text.slice(0, 400)}…` : text;
+      logger.warn({ contactId, status: res.status, text: snippet }, "Wix GET contact failed");
       return null;
     }
   }
   if (!res.ok) {
-    logger.warn({ contactId, status: res.status }, "Wix GET contact failed");
+    const text = await res.text();
+    const snippet = text.length > 400 ? `${text.slice(0, 400)}…` : text;
+    logger.warn({ contactId, status: res.status, text: snippet }, "Wix GET contact failed");
     return null;
   }
   const json = (await res.json()) as { revision?: number; contact?: { revision?: number } };
@@ -138,6 +142,47 @@ async function fetchContactRevision(wixSiteId: string, contactId: string): Promi
 export async function hasWixContact(wixSiteId: string, contactId: string): Promise<boolean> {
   const revision = await fetchContactRevision(wixSiteId, contactId);
   return revision !== null;
+}
+
+export async function findWixContactIdByPrimaryEmail(wixSiteId: string, email: string): Promise<string | null> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  const primaryHeaders = wixHeaders(wixSiteId, true);
+  if (!primaryHeaders) {
+    return null;
+  }
+  const body = JSON.stringify({
+    query: {
+      filter: { "info.emails.email": normalized },
+      paging: { limit: 5, offset: 0 },
+      fieldsets: ["BASIC"],
+    },
+  });
+  let res = await fetch(CONTACTS_QUERY_V4, { method: "POST", headers: primaryHeaders, body });
+  if (!res.ok) {
+    const text = await res.text();
+    if (shouldRetryWithoutAccountId(res.status, text)) {
+      const retryHeaders = wixHeaders(wixSiteId, false);
+      if (retryHeaders) {
+        res = await fetch(CONTACTS_QUERY_V4, { method: "POST", headers: retryHeaders, body });
+      }
+    } else {
+      const snippet = text.length > 400 ? `${text.slice(0, 400)}…` : text;
+      logger.warn({ email: normalized, status: res.status, text: snippet }, "Wix query contact by email failed");
+      return null;
+    }
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    const snippet = text.length > 400 ? `${text.slice(0, 400)}…` : text;
+    logger.warn({ email: normalized, status: res.status, text: snippet }, "Wix query contact by email failed");
+    return null;
+  }
+  const json = (await res.json()) as { contacts?: Array<{ id?: string }> };
+  const id = json.contacts?.[0]?.id;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
 }
 
 export async function createWixContactFromHubspotPayload(
