@@ -304,9 +304,12 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
   const updatedEntity =
     nestedEvent?.updatedEvent &&
     typeof nestedEvent.updatedEvent === "object" &&
-    (nestedEvent.updatedEvent as Record<string, unknown>).entity &&
-    typeof (nestedEvent.updatedEvent as Record<string, unknown>).entity === "object"
-      ? ((nestedEvent.updatedEvent as Record<string, unknown>).entity as Record<string, unknown>)
+    (((nestedEvent.updatedEvent as Record<string, unknown>).entity &&
+      typeof (nestedEvent.updatedEvent as Record<string, unknown>).entity === "object") ||
+      ((nestedEvent.updatedEvent as Record<string, unknown>).currentEntity &&
+        typeof (nestedEvent.updatedEvent as Record<string, unknown>).currentEntity === "object"))
+      ? (((nestedEvent.updatedEvent as Record<string, unknown>).entity ??
+          (nestedEvent.updatedEvent as Record<string, unknown>).currentEntity) as Record<string, unknown>)
       : null;
   const enrichedBody: Record<string, unknown> = {
     ...body,
@@ -350,7 +353,9 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
     readNestedString(enrichedBody, "contact.contactId") ||
     readNestedString(enrichedBody, "contactDetails.contactId") ||
     readNestedString(enrichedBody, "createdEvent.entity.id") ||
+    readNestedString(enrichedBody, "createdEvent.currentEntity.id") ||
     readNestedString(enrichedBody, "updatedEvent.entity.id") ||
+    readNestedString(enrichedBody, "updatedEvent.currentEntity.id") ||
     findFirstStringByKeys(enrichedBody, new Set(["contactid", "wixcontactid", "entityid"]));
   if (wixContactId) {
     normalizedPayload.wixContactId = wixContactId;
@@ -365,7 +370,9 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
     readNestedString(enrichedBody, "contactDetails.email") ||
     readNestedString(enrichedBody, "contact.emails.0.email") ||
     readNestedString(enrichedBody, "createdEvent.entity.primaryInfo.email") ||
+    readNestedString(enrichedBody, "createdEvent.currentEntity.primaryInfo.email") ||
     readNestedString(enrichedBody, "updatedEvent.entity.primaryInfo.email") ||
+    readNestedString(enrichedBody, "updatedEvent.currentEntity.primaryInfo.email") ||
     findPrimaryEmail(enrichedBody);
   if (email) {
     normalizedPayload.email = email;
@@ -380,7 +387,9 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
     readNestedString(enrichedBody, "contact.contactInfo.firstName") ||
     readNestedString(enrichedBody, "contactDetails.firstName") ||
     readNestedString(enrichedBody, "createdEvent.entity.info.name.first") ||
-    readNestedString(enrichedBody, "updatedEvent.entity.info.name.first");
+    readNestedString(enrichedBody, "createdEvent.currentEntity.info.name.first") ||
+    readNestedString(enrichedBody, "updatedEvent.entity.info.name.first") ||
+    readNestedString(enrichedBody, "updatedEvent.currentEntity.info.name.first");
   if (firstName) {
     normalizedPayload.firstName = firstName;
   }
@@ -394,7 +403,9 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
     readNestedString(enrichedBody, "contact.contactInfo.lastName") ||
     readNestedString(enrichedBody, "contactDetails.lastName") ||
     readNestedString(enrichedBody, "createdEvent.entity.info.name.last") ||
-    readNestedString(enrichedBody, "updatedEvent.entity.info.name.last");
+    readNestedString(enrichedBody, "createdEvent.currentEntity.info.name.last") ||
+    readNestedString(enrichedBody, "updatedEvent.entity.info.name.last") ||
+    readNestedString(enrichedBody, "updatedEvent.currentEntity.info.name.last");
   if (lastName) {
     normalizedPayload.lastName = lastName;
   }
@@ -407,7 +418,9 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
     readNestedString(enrichedBody, "contact.primaryInfo.phone") ||
     readNestedString(enrichedBody, "contactDetails.phone") ||
     readNestedString(enrichedBody, "createdEvent.entity.primaryInfo.phone") ||
-    readNestedString(enrichedBody, "updatedEvent.entity.primaryInfo.phone");
+    readNestedString(enrichedBody, "createdEvent.currentEntity.primaryInfo.phone") ||
+    readNestedString(enrichedBody, "updatedEvent.entity.primaryInfo.phone") ||
+    readNestedString(enrichedBody, "updatedEvent.currentEntity.primaryInfo.phone");
   if (phone) {
     normalizedPayload.phone = phone;
   }
