@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { dashboard } from "@wix/dashboard";
 import { apiRequest } from "../api/api-client";
 import { wixFieldPalette } from "../shared/constants";
 import { buildDefaultMappings } from "../shared/mapping-utils";
@@ -21,6 +22,17 @@ function normalizeSyncDirection(value: string): SyncDirection {
     return value;
   }
   return "bidirectional";
+}
+
+function showDashboardToast(
+  message: string,
+  type: "standard" | "success" | "warning" | "error" = "success",
+): void {
+  try {
+    dashboard.showToast({ message, type });
+  } catch {
+    // showToast is only available inside the Wix dashboard host; ignore in other contexts.
+  }
 }
 
 function sameSyncId(a: number | string | null | undefined, b: number | string | null | undefined): boolean {
@@ -707,7 +719,15 @@ export function useDashboardState() {
     if (!selectedSyncId) {
       return;
     }
-    await apiRequest<{ deleted: boolean }>(`/dashboard/syncs/${selectedSyncId}`, { method: "DELETE" });
+    try {
+      await apiRequest<{ deleted: boolean }>(`/dashboard/syncs/${selectedSyncId}`, { method: "DELETE" });
+    } catch (error) {
+      showDashboardToast(
+        error instanceof Error && error.message ? error.message : "Failed to delete sync. Please try again.",
+        "error",
+      );
+      throw error;
+    }
     const remainingSyncs = syncDefinitions.filter((s) => s.id !== selectedSyncId);
     setSyncDefinitions(remainingSyncs);
     const nextSync = remainingSyncs[0] ?? null;
@@ -723,6 +743,7 @@ export function useDashboardState() {
     setSyncStarted(false);
     setLiveEnabled(nextSync?.live ?? false);
     setSuccessMessage("Sync deleted.");
+    showDashboardToast("Sync deleted successfully", "success");
   };
 
   const startSyncImmediatelyFromDetails = async () => {

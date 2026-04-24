@@ -260,8 +260,9 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
   if (!wixId && hubspotContactId) {
     const created = await createWixContactFromHubspotPayload(event.wixSiteId, hubspotContactId, outbound);
     if (!created) {
-      logger.warn({ hubspotContactId }, "HubSpot→Wix: could not create Wix contact (check WIX_API_KEY and mapped name/email/phone)");
-      return;
+      throw new Error(
+        "HubSpot→Wix create failed: unable to create Wix contact (check WIX_API_KEY/site permissions and mapped email/name/phone fields)",
+      );
     }
     wixId = created;
   } else if (wixId) {

@@ -4,13 +4,50 @@ import { upsertWixContactShadow } from "./wix-contacts-shadow.js";
 
 const CONTACTS_V4 = "https://www.wixapis.com/contacts/v4/contacts";
 
+function parseObjectLikeJson(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function base64UrlDecode(value: string): string {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  return Buffer.from(padded, "base64").toString("utf8");
+}
+
+function deriveAccountIdFromApiKey(apiKey: string): string | undefined {
+  const parts = apiKey.split(".");
+  if (parts.length !== 3) {
+    return undefined;
+  }
+  const payloadRaw = base64UrlDecode(parts[1] ?? "");
+  const payload = parseObjectLikeJson(payloadRaw);
+  const dataRaw = typeof payload?.data === "string" ? payload.data : "";
+  const data = dataRaw ? parseObjectLikeJson(dataRaw) : null;
+  const tenant = data?.tenant;
+  if (!tenant || typeof tenant !== "object") {
+    return undefined;
+  }
+  const id = (tenant as Record<string, unknown>).id;
+  return typeof id === "string" && id.trim().length > 0 ? id.trim() : undefined;
+}
+
 function wixHeaders(siteId: string): Record<string, string> | null {
   if (!env.WIX_API_KEY) {
     return null;
   }
+  const accountId = env.WIX_ACCOUNT_ID?.trim() || deriveAccountIdFromApiKey(env.WIX_API_KEY);
   return {
     Authorization: env.WIX_API_KEY,
     "wix-site-id": siteId,
+    ...(accountId ? { "wix-account-id": accountId } : {}),
     "Content-Type": "application/json",
     Accept: "application/json",
   };
@@ -102,7 +139,30 @@ export async function createWixContactFromHubspotPayload(
   });
   if (!res.ok) {
     const text = await res.text();
-    logger.warn({ hubspotContactId, status: res.status, text }, "Wix POST create contact failed");
+    const responseHeaders = Object.fromEntries(res.headers.entries());
+    const safeHeaders = {
+      "x-wix-request-id": responseHeaders["x-wix-request-id"],
+      "x-wix-error-code": responseHeaders["x-wix-error-code"],
+      "x-wix-service-id": responseHeaders["x-wix-service-id"],
+      "content-type": responseHeaders["content-type"],
+    };
+    logger.warn(
+      {
+        hubspotContactId,
+        status: res.status,
+        text,
+        wixSiteId,
+        hasWixApiKey: Boolean(env.WIX_API_KEY),
+        hasWixAccountId: Boolean(env.WIX_ACCOUNT_ID),
+        requestHeaders: {
+          hasAuthorization: Boolean(headers.Authorization),
+          hasWixSiteId: Boolean(headers["wix-site-id"]),
+          hasWixAccountId: Boolean(headers["wix-account-id"]),
+        },
+        responseHeaders: safeHeaders,
+      },
+      "Wix POST create contact failed",
+    );
     return null;
   }
   const json = (await res.json()) as { contact?: { id?: string } };
