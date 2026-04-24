@@ -2,6 +2,11 @@ import type { NextFunction, Request, Response } from "express";
 import { env } from "../config/env.js";
 import { getInstanceIdFromPayload, parseWixInstancePayloadUnsigned, verifyWixSignedInstance } from "../lib/wix-app-instance.js";
 
+function withCanonicalSiteId(siteId: string): string {
+  const canonical = env.WIX_CANONICAL_SITE_ID?.trim();
+  return canonical && canonical.length > 0 ? canonical : siteId;
+}
+
 export function resolveWixSiteContext(req: Request, res: Response, next: NextFunction): void {
   if (req.method === "OPTIONS") {
     next();
@@ -23,7 +28,7 @@ export function resolveWixSiteContext(req: Request, res: Response, next: NextFun
       res.status(401).json({ error: "Signed instance missing instanceId" });
       return;
     }
-    res.locals.wixSiteId = instanceId;
+    res.locals.wixSiteId = withCanonicalSiteId(instanceId);
     next();
     return;
   }
@@ -37,7 +42,7 @@ export function resolveWixSiteContext(req: Request, res: Response, next: NextFun
       const payload = parseWixInstancePayloadUnsigned(auth);
       const instanceId = payload ? getInstanceIdFromPayload(payload) : null;
       if (instanceId) {
-        res.locals.wixSiteId = instanceId;
+        res.locals.wixSiteId = withCanonicalSiteId(instanceId);
         next();
         return;
       }
@@ -45,6 +50,6 @@ export function resolveWixSiteContext(req: Request, res: Response, next: NextFun
     res.status(400).json({ error: "Missing x-wix-site-id header" });
     return;
   }
-  res.locals.wixSiteId = headerSite;
+  res.locals.wixSiteId = withCanonicalSiteId(headerSite);
   next();
 }
