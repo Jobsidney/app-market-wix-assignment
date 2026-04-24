@@ -7,6 +7,7 @@ export function resolveWixSiteContext(req: Request, res: Response, next: NextFun
     next();
     return;
   }
+  const headerSite = req.header("x-wix-site-id")?.trim();
   const auth = req.header("authorization")?.trim();
   if (auth && auth.includes(".") && env.WIX_APP_SECRET) {
     const payload = verifyWixSignedInstance(auth, env.WIX_APP_SECRET);
@@ -18,12 +19,13 @@ export function resolveWixSiteContext(req: Request, res: Response, next: NextFun
       res.status(403).json({ error: "Anonymous dashboard access is not allowed" });
       return;
     }
-    const instanceId = getInstanceIdFromPayload(payload);
-    if (!instanceId) {
-      res.status(401).json({ error: "Signed instance missing instanceId" });
+    const payloadSiteId = getInstanceIdFromPayload(payload);
+    const resolvedSiteId = headerSite || payloadSiteId;
+    if (!resolvedSiteId) {
+      res.status(401).json({ error: "Signed instance missing site context" });
       return;
     }
-    res.locals.wixSiteId = instanceId;
+    res.locals.wixSiteId = resolvedSiteId;
     next();
     return;
   }
@@ -31,7 +33,6 @@ export function resolveWixSiteContext(req: Request, res: Response, next: NextFun
     res.status(401).json({ error: "Missing Authorization signed app instance" });
     return;
   }
-  const headerSite = req.header("x-wix-site-id")?.trim();
   if (!headerSite) {
     if (auth && auth.includes(".")) {
       const payload = parseWixInstancePayloadUnsigned(auth);

@@ -56,6 +56,19 @@ export function parseWixInstancePayloadUnsigned(instance: string): Record<string
 }
 
 export function getInstanceIdFromPayload(payload: Record<string, unknown>): string | null {
-  const id = payload.instanceId;
-  return typeof id === "string" && id.trim() ? id.trim() : null;
+  const site = payload.site;
+  const candidates: Array<unknown> = [
+    payload.metaSiteId,
+    payload.metasiteId,
+    payload.siteId,
+    site && typeof site === "object" ? (site as Record<string, unknown>).metaSiteId : undefined,
+    site && typeof site === "object" ? (site as Record<string, unknown>).metasiteId : undefined,
+    payload.instanceId,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
 }
