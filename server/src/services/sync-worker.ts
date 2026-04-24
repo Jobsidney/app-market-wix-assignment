@@ -49,6 +49,43 @@ function buildWixFallbackHubspotPayload(payload: Record<string, unknown>): Recor
   return fallback;
 }
 
+function mergeMissingHubspotContactBasics(
+  outbound: Record<string, unknown>,
+  sourcePayload: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...outbound };
+  const outboundEmail = pickFirstString(merged.email, merged.primaryEmail);
+  const outboundFirstName = pickFirstString(merged.firstname, merged.firstName);
+  const outboundLastName = pickFirstString(merged.lastname, merged.lastName);
+  const outboundPhone = pickFirstString(merged.phone, merged.mobilePhone);
+
+  if (!outboundEmail) {
+    const fallbackEmail = pickFirstString(sourcePayload.email, sourcePayload.primaryEmail);
+    if (fallbackEmail) {
+      merged.email = fallbackEmail;
+    }
+  }
+  if (!outboundFirstName) {
+    const fallbackFirstName = pickFirstString(sourcePayload.firstname, sourcePayload.firstName);
+    if (fallbackFirstName) {
+      merged.firstname = fallbackFirstName;
+    }
+  }
+  if (!outboundLastName) {
+    const fallbackLastName = pickFirstString(sourcePayload.lastname, sourcePayload.lastName);
+    if (fallbackLastName) {
+      merged.lastname = fallbackLastName;
+    }
+  }
+  if (!outboundPhone) {
+    const fallbackPhone = pickFirstString(sourcePayload.phone, sourcePayload.mobilePhone);
+    if (fallbackPhone) {
+      merged.phone = fallbackPhone;
+    }
+  }
+  return merged;
+}
+
 function getNestedString(source: unknown, path: string): string {
   if (!source || typeof source !== "object") {
     return "";
@@ -224,7 +261,10 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
       ? transformByPersistedMappings(sourcePayload, fieldRows, "wix_to_hubspot")
       : transformByPersistedMappings(sourcePayload, fieldRows, "hubspot_to_wix");
 
-  let outbound = transformed;
+  let outbound =
+    event.source === "hubspot"
+      ? mergeMissingHubspotContactBasics(transformed, sourcePayload)
+      : transformed;
   if (Object.keys(outbound).length === 0 && event.source === "wix") {
     outbound = buildWixFallbackHubspotPayload(sourcePayload);
   }
