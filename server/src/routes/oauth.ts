@@ -3,9 +3,21 @@ import { exchangeAuthCode } from "../services/hubspot-auth.js";
 
 export const oauthRouter = Router();
 
-function renderOauthCallbackPage(connected: boolean): string {
+function readSingleQueryValue(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (Array.isArray(value)) {
+    const first = value.find((entry) => typeof entry === "string" && entry.trim());
+    return typeof first === "string" ? first.trim() : null;
+  }
+  return null;
+}
+
+function renderOauthCallbackPage(connected: boolean, details?: string): string {
   const statusText = connected ? "HubSpot connected successfully. You can return to Wix now." : "HubSpot connection failed.";
   const statusPayload = connected ? "connected" : "error";
+  const extraDetails = !connected && details ? `<p class="hint">${details}</p>` : "";
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -28,6 +40,7 @@ function renderOauthCallbackPage(connected: boolean): string {
       <div class="card">
         <p class="title ${connected ? "ok" : "bad"}">${connected ? "Connected" : "Connection Error"}</p>
         <p class="copy">${statusText}</p>
+        ${extraDetails}
         <p class="hint">This window will close automatically.</p>
       </div>
     </div>
@@ -45,15 +58,31 @@ function renderOauthCallbackPage(connected: boolean): string {
 
 oauthRouter.get("/hubspot/callback", async (req, res, next) => {
   try {
-    const code = req.query.code;
-    const wixSiteId = req.query.state;
-    if (typeof code !== "string" || typeof wixSiteId !== "string") {
-      res.status(400).type("html").send(renderOauthCallbackPage(false));
+    const oauthError = readSingleQueryValue(req.query.error);
+    const oauthErrorDescription = readSingleQueryValue(req.query.error_description);
+    if (oauthError) {
+      const userFacingError = oauthErrorDescription
+        ? `HubSpot returned: ${oauthErrorDescription}`
+        : `HubSpot returned: ${oauthError}`;
+      res.status(200).type("html").send(renderOauthCallbackPage(false, userFacingError));
+      return;
+    }
+
+    const code = readSingleQueryValue(req.query.code);
+    const wixSiteId = readSingleQueryValue(req.query.state);
+    if (!code || !wixSiteId) {
+      res.status(400).type("html").send(renderOauthCallbackPage(false, "Missing OAuth code or state."));
       return;
     }
     await exchangeAuthCode(code, wixSiteId);
     res.status(200).type("html").send(renderOauthCallbackPage(true));
   } catch (error) {
-    res.status(200).type("html").send(renderOauthCallbackPage(false));
+    const message = error instanceof Error && error.message ? error.message : "Unknown OAuth callback error.";
+    console.error("HubSpot OAuth callback failed", {
+      message,
+      codePresent: Boolean(readSingleQueryValue(req.query.code)),
+      statePresent: Boolean(readSingleQueryValue(req.query.state)),
+    });
+    res.status(200).type("html").send(renderOauthCallbackPage(false, message));
   }
 });
