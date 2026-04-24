@@ -331,22 +331,9 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
       .json({ error: "Missing Wix site id (x-wix-site-id header, wixSiteId query, or wixSiteId body field)" });
     return;
   }
-  const normalizedPayload: Record<string, unknown> = {};
-  const passthroughKeys: Array<keyof typeof enrichedBody | string> = [
-    "hubspotContactId",
-    "hubspotPortalId",
-    "correlationId",
-    "currentRemoteState",
-    "updatedAt",
-  ];
-  for (const key of passthroughKeys) {
-    const value = enrichedBody[key as string];
-    if (value !== undefined && value !== null && value !== "") {
-      normalizedPayload[key as string] = value;
-    }
-  }
+  const normalizedPayload: Record<string, unknown> = { ...body };
   const syncIdQuery = typeof req.query.syncId === "string" ? Number(req.query.syncId) : NaN;
-  const syncIdBody = Number(body.syncId);
+  const syncIdBody = Number(normalizedPayload.syncId);
   const explicitSyncId = Number.isFinite(syncIdBody)
     ? syncIdBody
     : Number.isFinite(syncIdQuery)
