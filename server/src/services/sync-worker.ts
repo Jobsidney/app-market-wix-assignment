@@ -78,10 +78,58 @@ function parseObjectLikeJson(value: unknown): Record<string, unknown> | null {
   }
 }
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CONTACT_ID_KEY_HINTS = new Set(["entityid", "wixcontactid", "contactid"]);
+
+function deepFindContactId(source: unknown, depth = 0): string {
+  if (depth > 6 || !source) {
+    return "";
+  }
+  if (typeof source === "string") {
+    return UUID_PATTERN.test(source.trim()) ? source.trim() : "";
+  }
+  if (Array.isArray(source)) {
+    for (const item of source) {
+      const hit = deepFindContactId(item, depth + 1);
+      if (hit) {
+        return hit;
+      }
+    }
+    return "";
+  }
+  if (typeof source !== "object") {
+    return "";
+  }
+  for (const [rawKey, value] of Object.entries(source as Record<string, unknown>)) {
+    const key = rawKey.replace(/[\s_-]/g, "").toLowerCase();
+    if (CONTACT_ID_KEY_HINTS.has(key) && typeof value === "string" && UUID_PATTERN.test(value.trim())) {
+      return value.trim();
+    }
+    if (typeof value === "string") {
+      const nested = parseObjectLikeJson(value);
+      if (nested) {
+        const hit = deepFindContactId(nested, depth + 1);
+        if (hit) {
+          return hit;
+        }
+      }
+    }
+  }
+  for (const value of Object.values(source as Record<string, unknown>)) {
+    if (value && (typeof value === "object" || Array.isArray(value))) {
+      const hit = deepFindContactId(value, depth + 1);
+      if (hit) {
+        return hit;
+      }
+    }
+  }
+  return "";
+}
+
 function extractWixContactId(payload: Record<string, unknown>, fallbackId?: string): string {
   const bodyData = payload.data && typeof payload.data === "object" ? (payload.data as Record<string, unknown>) : null;
   const nestedEvent = parseObjectLikeJson(bodyData?.data) ?? parseObjectLikeJson(payload.data);
-  return (
+  const directMatch =
     pickFirstString(
       fallbackId,
       payload.wixContactId,
@@ -102,36 +150,33 @@ function extractWixContactId(payload: Record<string, unknown>, fallbackId?: stri
       getNestedString(nestedEvent, "updatedEvent.entity.id"),
       getNestedString(nestedEvent, "createdEvent.currentEntity.id"),
       getNestedString(nestedEvent, "createdEvent.entity.id"),
-    ) ?? ""
-  );
-}
-
-function summarizePayloadShape(payload: Record<string, unknown>): string {
-  try {
-    const topKeys = Object.keys(payload).slice(0, 20);
-    const dataKeys =
-      payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
-        ? Object.keys(payload.data as Record<string, unknown>).slice(0, 20)
-        : [];
-    const nestedDataKeys =
-      payload.data && typeof (payload.data as Record<string, unknown>).data === "string"
-        ? "stringified"
-        : payload.data && typeof (payload.data as Record<string, unknown>).data === "object"
-          ? Object.keys((payload.data as Record<string, unknown>).data as Record<string, unknown>).slice(0, 20).join(",")
-          : "";
-    const preview = JSON.stringify(payload).slice(0, 600);
-    return `keys=[${topKeys.join(",")}] data=[${dataKeys.join(",")}] data.data=[${nestedDataKeys}] preview=${preview}`;
-  } catch {
-    return "payload_unserializable";
+    ) ?? "";
+  if (directMatch) {
+    return directMatch;
   }
+  const combinedSources: unknown[] = [payload, bodyData, nestedEvent];
+  for (const source of combinedSources) {
+    const hit = deepFindContactId(source);
+    if (hit) {
+      return hit;
+    }
+  }
+  return "";
 }
 
 export async function processSyncEvent(event: IncomingEvent): Promise<void> {
   const resolvedWixContactId = extractWixContactId(event.payload, event.wixContactId);
   if (event.source === "wix" && !resolvedWixContactId) {
-    const shape = summarizePayloadShape(event.payload);
-    logger.error({ shape, syncId: event.syncId }, "Missing wixContactId in sync event");
-    throw new Error(`Missing wixContactId in sync event (${shape})`);
+    const payloadKeys = Object.keys(event.payload ?? {});
+    const snippet = (() => {
+      try {
+        return JSON.stringify(event.payload).slice(0, 400);
+      } catch {
+        return "<unserializable>";
+      }
+    })();
+    logger.warn({ payloadKeys, snippet, syncId: event.syncId }, "Missing wixContactId: payload shape diagnostic");
+    throw new Error(`Missing wixContactId in sync event (keys: ${payloadKeys.join(",") || "<none>"})`);
   }
   if (event.correlationId?.startsWith(env.APP_INTERNAL_ID)) {
     logger.info({ wixContactId: resolvedWixContactId }, "Loop prevention: ignored internal correlation id");

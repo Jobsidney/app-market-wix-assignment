@@ -7,7 +7,6 @@ import { verifyHubspotSignature } from "../middleware/verify-hubspot-signature.j
 import { resolveWixSiteIdByHubspotPortalId } from "../services/hubspot-auth.js";
 import { getDefaultSyncId, listSyncDefinitions } from "../services/sync-definitions-repo.js";
 import { db } from "../lib/db.js";
-import { logger } from "../lib/logger.js";
 
 export const webhooksRouter = Router();
 
@@ -287,33 +286,7 @@ async function resolveWixSiteIdForSync(
   return resolved;
 }
 
-function decodeIfJwt(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const parts = value.trim().split(".");
-  if (parts.length !== 3) {
-    return null;
-  }
-  return parseBase64UrlJson(parts[1] ?? "");
-}
-
 async function handleWixContactWebhook(req: Request, res: Response): Promise<void> {
-  const rawBody = (req as RequestWithRawBody).rawBody;
-  const rawPreview = rawBody ? rawBody.toString("utf8").slice(0, 1500) : "";
-  logger.info(
-    {
-      contentType: req.header("content-type") ?? "",
-      rawLength: rawBody?.length ?? 0,
-      rawPreview,
-      bodyKeys:
-        req.body && typeof req.body === "object" && !Array.isArray(req.body)
-          ? Object.keys(req.body as Record<string, unknown>).slice(0, 20)
-          : [],
-      query: req.query,
-    },
-    "wix contact webhook received",
-  );
   const parsedRawBody = parseRawWebhookBody(req);
   const requestBody =
     req.body && typeof req.body === "object" && !Array.isArray(req.body)
@@ -321,11 +294,7 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
       : null;
   const body: Record<string, unknown> = { ...(parsedRawBody ?? {}), ...(requestBody ?? {}) };
   const bodyData = body.data && typeof body.data === "object" ? (body.data as Record<string, unknown>) : null;
-  const nestedEvent =
-    parseObjectLikeJson(bodyData?.data) ??
-    parseObjectLikeJson(body.data) ??
-    decodeIfJwt(bodyData?.data) ??
-    decodeIfJwt(body.data);
+  const nestedEvent = parseObjectLikeJson(bodyData?.data) ?? parseObjectLikeJson(body.data);
   const createdEntity =
     nestedEvent?.createdEvent &&
     typeof nestedEvent.createdEvent === "object" &&
@@ -391,16 +360,6 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
     findFirstStringByKeys(enrichedBody, new Set(["contactid", "wixcontactid", "entityid"]));
   if (wixContactId) {
     normalizedPayload.wixContactId = wixContactId;
-  } else {
-    logger.error(
-      {
-        topKeys: Object.keys(enrichedBody).slice(0, 30),
-        preview: JSON.stringify(enrichedBody).slice(0, 1500),
-      },
-      "wix contact webhook missing contact id",
-    );
-    res.status(200).json({ accepted: true, skipped: "missing_wix_contact_id" });
-    return;
   }
   const email =
     readMeaningfulString(enrichedBody.email) ||
