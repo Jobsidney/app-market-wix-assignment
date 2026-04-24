@@ -155,6 +155,21 @@ function findPrimaryEmail(source: unknown): string {
   return "";
 }
 
+function parseObjectLikeJson(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 async function enqueueIncomingEvent(
   req: Request,
   res: Response,
@@ -238,9 +253,34 @@ async function resolveWixSiteIdForSync(
 
 async function handleWixContactWebhook(req: Request, res: Response): Promise<void> {
   const body = (req.body as Record<string, unknown>) ?? {};
+  const bodyData = body.data && typeof body.data === "object" ? (body.data as Record<string, unknown>) : null;
+  const nestedEvent = parseObjectLikeJson(bodyData?.data);
+  const createdEntity =
+    nestedEvent?.createdEvent &&
+    typeof nestedEvent.createdEvent === "object" &&
+    (nestedEvent.createdEvent as Record<string, unknown>).entity &&
+    typeof (nestedEvent.createdEvent as Record<string, unknown>).entity === "object"
+      ? ((nestedEvent.createdEvent as Record<string, unknown>).entity as Record<string, unknown>)
+      : null;
+  const updatedEntity =
+    nestedEvent?.updatedEvent &&
+    typeof nestedEvent.updatedEvent === "object" &&
+    (nestedEvent.updatedEvent as Record<string, unknown>).entity &&
+    typeof (nestedEvent.updatedEvent as Record<string, unknown>).entity === "object"
+      ? ((nestedEvent.updatedEvent as Record<string, unknown>).entity as Record<string, unknown>)
+      : null;
+  const enrichedBody: Record<string, unknown> = {
+    ...body,
+    ...(nestedEvent ?? {}),
+    ...(createdEntity ? { contact: createdEntity } : {}),
+    ...(updatedEntity ? { contact: updatedEntity } : {}),
+  };
   const wixSiteIdHeader = req.header("x-wix-site-id")?.trim() ?? "";
   const wixSiteIdQuery = typeof req.query.wixSiteId === "string" ? req.query.wixSiteId.trim() : "";
-  const wixSiteIdBody = typeof body.wixSiteId === "string" ? body.wixSiteId.trim() : "";
+  const wixSiteIdBody =
+    (typeof body.wixSiteId === "string" ? body.wixSiteId.trim() : "") ||
+    (typeof enrichedBody.instanceId === "string" ? enrichedBody.instanceId.trim() : "") ||
+    (typeof bodyData?.instanceId === "string" ? bodyData.instanceId.trim() : "");
   const wixSiteId = wixSiteIdHeader || wixSiteIdQuery || wixSiteIdBody;
   if (!wixSiteId) {
     res
@@ -257,68 +297,78 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
       ? syncIdQuery
       : undefined;
   const wixContactId =
-    readMeaningfulString(body.wixContactId) ||
-    resolveFromTokenPath(body, body.wixContactId) ||
-    readMeaningfulString(body.contactId) ||
-    resolveFromTokenPath(body, body.contactId) ||
-    readMeaningfulString(body.entityId) ||
-    resolveFromTokenPath(body, body.entityId) ||
-    readNestedString(body, "data.wixContactId") ||
-    readNestedString(body, "data.entityId") ||
-    readNestedString(body, "payload.wixContactId") ||
-    readNestedString(body, "payload.entityId") ||
-    readNestedString(body, "contact.id") ||
-    readNestedString(body, "contact.contactId") ||
-    readNestedString(body, "contactDetails.contactId") ||
-    findFirstStringByKeys(body, new Set(["contactid", "wixcontactid", "entityid"]));
+    readMeaningfulString(enrichedBody.wixContactId) ||
+    resolveFromTokenPath(enrichedBody, enrichedBody.wixContactId) ||
+    readMeaningfulString(enrichedBody.contactId) ||
+    resolveFromTokenPath(enrichedBody, enrichedBody.contactId) ||
+    readMeaningfulString(enrichedBody.entityId) ||
+    resolveFromTokenPath(enrichedBody, enrichedBody.entityId) ||
+    readNestedString(enrichedBody, "data.wixContactId") ||
+    readNestedString(enrichedBody, "data.entityId") ||
+    readNestedString(enrichedBody, "payload.wixContactId") ||
+    readNestedString(enrichedBody, "payload.entityId") ||
+    readNestedString(enrichedBody, "contact.id") ||
+    readNestedString(enrichedBody, "contact.contactId") ||
+    readNestedString(enrichedBody, "contactDetails.contactId") ||
+    readNestedString(enrichedBody, "createdEvent.entity.id") ||
+    readNestedString(enrichedBody, "updatedEvent.entity.id") ||
+    findFirstStringByKeys(enrichedBody, new Set(["contactid", "wixcontactid", "entityid"]));
   if (wixContactId) {
     normalizedPayload.wixContactId = wixContactId;
   }
   const email =
-    readMeaningfulString(body.email) ||
-    resolveFromTokenPath(body, body.email) ||
-    readNestedString(body, "data.email") ||
-    readNestedString(body, "payload.email") ||
-    readNestedString(body, "contact.email") ||
-    readNestedString(body, "contact.primaryInfo.email") ||
-    readNestedString(body, "contactDetails.email") ||
-    readNestedString(body, "contact.emails.0.email") ||
-    findPrimaryEmail(body);
+    readMeaningfulString(enrichedBody.email) ||
+    resolveFromTokenPath(enrichedBody, enrichedBody.email) ||
+    readNestedString(enrichedBody, "data.email") ||
+    readNestedString(enrichedBody, "payload.email") ||
+    readNestedString(enrichedBody, "contact.email") ||
+    readNestedString(enrichedBody, "contact.primaryInfo.email") ||
+    readNestedString(enrichedBody, "contactDetails.email") ||
+    readNestedString(enrichedBody, "contact.emails.0.email") ||
+    readNestedString(enrichedBody, "createdEvent.entity.primaryInfo.email") ||
+    readNestedString(enrichedBody, "updatedEvent.entity.primaryInfo.email") ||
+    findPrimaryEmail(enrichedBody);
   if (email) {
     normalizedPayload.email = email;
   }
   const firstName =
-    readMeaningfulString(body.firstName) ||
-    resolveFromTokenPath(body, body.firstName) ||
-    readNestedString(body, "data.firstName") ||
-    readNestedString(body, "payload.firstName") ||
-    readNestedString(body, "contact.firstName") ||
-    readNestedString(body, "contact.name.first") ||
-    readNestedString(body, "contact.contactInfo.firstName") ||
-    readNestedString(body, "contactDetails.firstName");
+    readMeaningfulString(enrichedBody.firstName) ||
+    resolveFromTokenPath(enrichedBody, enrichedBody.firstName) ||
+    readNestedString(enrichedBody, "data.firstName") ||
+    readNestedString(enrichedBody, "payload.firstName") ||
+    readNestedString(enrichedBody, "contact.firstName") ||
+    readNestedString(enrichedBody, "contact.name.first") ||
+    readNestedString(enrichedBody, "contact.contactInfo.firstName") ||
+    readNestedString(enrichedBody, "contactDetails.firstName") ||
+    readNestedString(enrichedBody, "createdEvent.entity.info.name.first") ||
+    readNestedString(enrichedBody, "updatedEvent.entity.info.name.first");
   if (firstName) {
     normalizedPayload.firstName = firstName;
   }
   const lastName =
-    readMeaningfulString(body.lastName) ||
-    resolveFromTokenPath(body, body.lastName) ||
-    readNestedString(body, "data.lastName") ||
-    readNestedString(body, "payload.lastName") ||
-    readNestedString(body, "contact.lastName") ||
-    readNestedString(body, "contact.name.last") ||
-    readNestedString(body, "contact.contactInfo.lastName") ||
-    readNestedString(body, "contactDetails.lastName");
+    readMeaningfulString(enrichedBody.lastName) ||
+    resolveFromTokenPath(enrichedBody, enrichedBody.lastName) ||
+    readNestedString(enrichedBody, "data.lastName") ||
+    readNestedString(enrichedBody, "payload.lastName") ||
+    readNestedString(enrichedBody, "contact.lastName") ||
+    readNestedString(enrichedBody, "contact.name.last") ||
+    readNestedString(enrichedBody, "contact.contactInfo.lastName") ||
+    readNestedString(enrichedBody, "contactDetails.lastName") ||
+    readNestedString(enrichedBody, "createdEvent.entity.info.name.last") ||
+    readNestedString(enrichedBody, "updatedEvent.entity.info.name.last");
   if (lastName) {
     normalizedPayload.lastName = lastName;
   }
   const phone =
-    readMeaningfulString(body.phone) ||
-    resolveFromTokenPath(body, body.phone) ||
-    readNestedString(body, "data.phone") ||
-    readNestedString(body, "payload.phone") ||
-    readNestedString(body, "contact.phone") ||
-    readNestedString(body, "contact.primaryInfo.phone") ||
-    readNestedString(body, "contactDetails.phone");
+    readMeaningfulString(enrichedBody.phone) ||
+    resolveFromTokenPath(enrichedBody, enrichedBody.phone) ||
+    readNestedString(enrichedBody, "data.phone") ||
+    readNestedString(enrichedBody, "payload.phone") ||
+    readNestedString(enrichedBody, "contact.phone") ||
+    readNestedString(enrichedBody, "contact.primaryInfo.phone") ||
+    readNestedString(enrichedBody, "contactDetails.phone") ||
+    readNestedString(enrichedBody, "createdEvent.entity.primaryInfo.phone") ||
+    readNestedString(enrichedBody, "updatedEvent.entity.primaryInfo.phone");
   if (phone) {
     normalizedPayload.phone = phone;
   }
