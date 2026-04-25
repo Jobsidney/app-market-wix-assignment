@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isValidWixMetaSiteId } from "./wix-site-id.js";
 
 function b64UrlToBuffer(segment: string): Buffer {
   const normalized = segment.replace(/-/g, "+").replace(/_/g, "/");
@@ -66,7 +67,7 @@ export function getInstanceIdFromPayload(payload: Record<string, unknown>): stri
     payload.instanceId,
   ];
   for (const value of candidates) {
-    if (typeof value === "string" && value.trim()) {
+    if (typeof value === "string" && value.trim() && isValidWixMetaSiteId(value)) {
       return value.trim();
     }
   }

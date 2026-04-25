@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { env } from "../config/env.js";
 import { getInstanceIdFromPayload, parseWixInstancePayloadUnsigned, verifyWixSignedInstance } from "../lib/wix-app-instance.js";
+import { isValidWixMetaSiteId } from "../lib/wix-site-id.js";
 
 export function resolveWixSiteContext(req: Request, res: Response, next: NextFunction): void {
   if (req.method === "OPTIONS") {
@@ -20,7 +21,8 @@ export function resolveWixSiteContext(req: Request, res: Response, next: NextFun
       return;
     }
     const payloadSiteId = getInstanceIdFromPayload(payload);
-    const resolvedSiteId = headerSite || payloadSiteId;
+    const headerOk = headerSite && isValidWixMetaSiteId(headerSite) ? headerSite : "";
+    const resolvedSiteId = headerOk || payloadSiteId;
     if (!resolvedSiteId) {
       res.status(401).json({ error: "Signed instance missing site context" });
       return;
