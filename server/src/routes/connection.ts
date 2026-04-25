@@ -14,7 +14,8 @@ connectionRouter.use(resolveWixSiteContext);
 
 connectionRouter.get("/status", async (_req, res, next) => {
   try {
-    const wixSiteId = res.locals.wixSiteId as string;
+    const resolvedSiteId = res.locals.wixSiteId as string;
+    const wixSiteId = env.WIX_CANONICAL_SITE_ID?.trim() || resolvedSiteId;
     const result = await db.query("select 1 from oauth_installations where wix_site_id = $1", [wixSiteId]);
     res.status(200).json({ connected: Boolean(result.rowCount) });
   } catch (error) {
