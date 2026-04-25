@@ -275,17 +275,19 @@ export function useDashboardState() {
               setExistingRecordPolicy(firstSync.existingRecordPolicy);
             }
           }
-          try {
-            mappingResult = await apiRequest<{ mappings: Array<Omit<MappingRow, "id"> & { id: number }> }>(
-              `/mappings${getSyncQuery(firstSyncId)}`,
-            );
-          } catch {
-            mappingResult = { mappings: [] };
-          }
-          try {
-            jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(firstSyncId));
-          } catch {
-            jobsResult = { jobs: [], managedRecordsCount: 0 };
+          if (firstSyncId !== null) {
+            try {
+              mappingResult = await apiRequest<{ mappings: Array<Omit<MappingRow, "id"> & { id: number }> }>(
+                `/mappings${getSyncQuery(firstSyncId)}`,
+              );
+            } catch {
+              mappingResult = { mappings: [] };
+            }
+            try {
+              jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(firstSyncId));
+            } catch {
+              jobsResult = { jobs: [], managedRecordsCount: 0 };
+            }
           }
         }
         if (mappingResult.mappings.length > 0) {
