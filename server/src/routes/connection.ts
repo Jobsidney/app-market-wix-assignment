@@ -2,7 +2,6 @@ import { Router } from "express";
 import { z } from "zod";
 import { db } from "../lib/db.js";
 import { env } from "../config/env.js";
-import { ensureAuthenticated } from "../middleware/ensure-authenticated.js";
 import { requireAppMarketKey } from "../middleware/require-app-market-key.js";
 import { resolveWixSiteContext } from "../middleware/resolve-wix-site-context.js";
 import { getSiteSyncLiveEnabled, setSiteSyncLiveEnabled } from "../services/site-sync-state-repo.js";
@@ -14,8 +13,7 @@ connectionRouter.use(resolveWixSiteContext);
 
 connectionRouter.get("/status", async (_req, res, next) => {
   try {
-    const resolvedSiteId = res.locals.wixSiteId as string;
-    const wixSiteId = env.WIX_CANONICAL_SITE_ID?.trim() || resolvedSiteId;
+    const wixSiteId = res.locals.wixSiteId as string;
     const result = await db.query("select 1 from oauth_installations where wix_site_id = $1", [wixSiteId]);
     res.status(200).json({ connected: Boolean(result.rowCount) });
   } catch (error) {
@@ -24,15 +22,14 @@ connectionRouter.get("/status", async (_req, res, next) => {
 });
 
 connectionRouter.get("/authorize-url", (_req, res) => {
-  const resolvedSiteId = res.locals.wixSiteId as string;
-  const wixSiteId = env.WIX_CANONICAL_SITE_ID?.trim() || resolvedSiteId;
+  const wixSiteId = res.locals.wixSiteId as string;
   const redirectUri = encodeURIComponent(env.HUBSPOT_REDIRECT_URI);
   const scopes = encodeURIComponent("crm.objects.contacts.read crm.objects.contacts.write oauth");
   const url = `https://app.hubspot.com/oauth/authorize?client_id=${env.HUBSPOT_CLIENT_ID}&redirect_uri=${redirectUri}&scope=${scopes}&state=${encodeURIComponent(wixSiteId)}`;
   res.status(200).json({ authorizeUrl: url });
 });
 
-connectionRouter.delete("/", requireAppMarketKey, ensureAuthenticated, async (_req, res, next) => {
+connectionRouter.delete("/", requireAppMarketKey, async (_req, res, next) => {
   try {
     const wixSiteId = res.locals.wixSiteId as string;
     await db.query("delete from oauth_installations where wix_site_id = $1", [wixSiteId]);
