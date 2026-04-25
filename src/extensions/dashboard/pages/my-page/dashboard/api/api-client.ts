@@ -1,6 +1,6 @@
 const configuredApiBase = (import.meta.env.PUBLIC_API_BASE_URL as string | undefined)?.trim();
 const appMarketApiKey = (import.meta.env.PUBLIC_APP_MARKET_API_KEY as string | undefined)?.trim();
-const defaultWixSiteId = (import.meta.env.PUBLIC_DEFAULT_WIX_SITE_ID as string | undefined)?.trim() || "demo-site";
+const defaultWixSiteId = (import.meta.env.PUBLIC_DEFAULT_WIX_SITE_ID as string | undefined)?.trim() || "";
 const INSTANCE_STORAGE_KEY = "wix-hubspot-sync.instance";
 
 function decodeBase64Url(value: string): string | null {
@@ -85,6 +85,9 @@ export async function apiRequest<T>(path: string, options?: RequestInit): Promis
   const pathSiteId = getWixSiteIdFromUrl();
   const instance = getScopedInstanceForCurrentSite(pathSiteId);
   const wixSiteId = pathSiteId || getWixSiteIdFromInstance(instance) || defaultWixSiteId;
+  if (!wixSiteId) {
+    throw new Error("Missing Wix site context for dashboard request");
+  }
   const response = await fetch(`${apiBase}${path}`, {
     ...options,
     cache: "no-store",
