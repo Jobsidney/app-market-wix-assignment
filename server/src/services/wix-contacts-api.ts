@@ -100,7 +100,22 @@ export function buildWixContactInfoPatch(payload: Record<string, unknown>): Reco
   return info;
 }
 
-async function fetchContactRevision(wixSiteId: string, contactId: string): Promise<number | null> {
+interface WixContactJson {
+  revision?: number;
+  contact?: {
+    revision?: number;
+    info?: {
+      name?: { first?: string; last?: string };
+      emails?: { items?: Array<{ email?: string; primary?: boolean }> };
+      phones?: { items?: Array<{ phone?: string; primary?: boolean }> };
+      jobTitle?: string;
+      company?: string;
+    };
+    primaryInfo?: { email?: string; phone?: string };
+  };
+}
+
+async function fetchWixContact(wixSiteId: string, contactId: string): Promise<WixContactJson | null> {
   const headers = wixHeaders(wixSiteId);
   if (!headers) {
     return null;
@@ -110,7 +125,14 @@ async function fetchContactRevision(wixSiteId: string, contactId: string): Promi
     logger.warn({ contactId, status: res.status }, "Wix GET contact failed");
     return null;
   }
-  const json = (await res.json()) as { revision?: number; contact?: { revision?: number } };
+  return (await res.json()) as WixContactJson;
+}
+
+async function fetchContactRevision(wixSiteId: string, contactId: string): Promise<number | null> {
+  const json = await fetchWixContact(wixSiteId, contactId);
+  if (!json) {
+    return null;
+  }
   const rev = json.revision ?? json.contact?.revision;
   return typeof rev === "number" ? rev : null;
 }
@@ -120,22 +142,55 @@ export async function hasWixContact(wixSiteId: string, contactId: string): Promi
   return revision !== null;
 }
 
+export async function getWixContactProperties(
+  wixSiteId: string,
+  contactId: string,
+): Promise<Record<string, unknown> | null> {
+  const json = await fetchWixContact(wixSiteId, contactId);
+  if (!json) {
+    return null;
+  }
+  const contact = json.contact;
+  if (!contact) {
+    return null;
+  }
+  const info = contact.info ?? {};
+  const primaryEmail =
+    contact.primaryInfo?.email ??
+    info.emails?.items?.find((e) => e.primary)?.email ??
+    info.emails?.items?.[0]?.email;
+  const primaryPhone =
+    contact.primaryInfo?.phone ??
+    info.phones?.items?.find((p) => p.primary)?.phone ??
+    info.phones?.items?.[0]?.phone;
+  const result: Record<string, unknown> = {};
+  if (info.name?.first) result["contactInfo.firstName"] = info.name.first;
+  if (info.name?.last) result["contactInfo.lastName"] = info.name.last;
+  if (primaryEmail) result["primaryInfo.email"] = primaryEmail;
+  if (primaryPhone) result["primaryInfo.phone"] = primaryPhone;
+  if (info.jobTitle) result["extendedFields.jobTitle"] = info.jobTitle;
+  if (info.company) result["extendedFields.company"] = info.company;
+  return result;
+}
+
 export async function createWixContactFromHubspotPayload(
   wixSiteId: string,
   hubspotContactId: string,
   transformedPayload: Record<string, unknown>,
-): Promise<string | null> {
+): Promise<string> {
   const shadowKey = `hubspot-${hubspotContactId}`;
   await upsertWixContactShadow(wixSiteId, shadowKey, transformedPayload);
   const headers = wixHeaders(wixSiteId);
   if (!headers) {
-    logger.info({ hubspotContactId }, "WIX_API_KEY unset; HubSpot→Wix create skipped after shadow write");
-    return null;
+    throw new Error("WIX_API_KEY is not configured — set it in your server environment variables");
   }
   const info = buildWixContactInfoPatch(transformedPayload);
   if (Object.keys(info).length === 0) {
-    logger.warn({ hubspotContactId }, "Cannot create Wix contact: mapped payload has no name, email, or phone");
-    return null;
+    throw new Error(
+      "HubSpot contact has no mappable fields (name, email, or phone). " +
+        "Make sure the contact has at least one of these set in HubSpot, " +
+        "and that your field mappings include email, firstname, or lastname.",
+    );
   }
   const res = await fetch(CONTACTS_V4, {
     method: "POST",
@@ -168,13 +223,12 @@ export async function createWixContactFromHubspotPayload(
       },
       "Wix POST create contact failed",
     );
-    return null;
+    throw new Error(`Wix API rejected contact creation (HTTP ${res.status}): ${text.slice(0, 300)}`);
   }
   const json = (await res.json()) as { contact?: { id?: string } };
   const id = json.contact?.id;
   if (!id) {
-    logger.warn({ hubspotContactId }, "Wix create contact response missing id");
-    return null;
+    throw new Error("Wix API created the contact but returned no contact ID in the response");
   }
   await upsertWixContactShadow(wixSiteId, id, transformedPayload);
   return id;

@@ -8,6 +8,7 @@ import { getHubspotContactProperties, upsertHubspotContact } from "./hubspot-con
 import {
   applyInboundHubspotToWixContact,
   createWixContactFromHubspotPayload,
+  getWixContactProperties,
   hasWixContact,
 } from "./wix-contacts-api.js";
 
@@ -256,6 +257,14 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
       sourcePayload = { ...enriched, ...event.payload };
     }
   }
+  if (event.source === "wix" && wixContactId) {
+    // Wix automations often send only metadata (exp, iat) without contact fields.
+    // Fetch the full contact from Wix so field mappings have real data to work with.
+    const enriched = await getWixContactProperties(event.wixSiteId, wixContactId);
+    if (enriched) {
+      sourcePayload = { ...enriched, ...event.payload };
+    }
+  }
   const transformed =
     event.source === "wix"
       ? transformByPersistedMappings(sourcePayload, fieldRows, "wix_to_hubspot")
@@ -307,11 +316,6 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
 
   if (!wixId && hubspotContactId) {
     const created = await createWixContactFromHubspotPayload(event.wixSiteId, hubspotContactId, outbound);
-    if (!created) {
-      throw new Error(
-        "HubSpot→Wix create failed: unable to create Wix contact (check WIX_API_KEY/site permissions and mapped email/name/phone fields)",
-      );
-    }
     wixId = created;
   } else if (wixId) {
     wixId = await applyInboundHubspotToWixContact(event.wixSiteId, wixId, outbound);
