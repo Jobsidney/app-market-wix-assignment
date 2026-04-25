@@ -479,8 +479,6 @@ async function handleHubspotContactWebhook(req: Request, res: Response): Promise
     [wixSiteId, portalId],
   );
 
-  // Deduplicate by objectId so a batch with multiple property-change events
-  // for the same contact only enqueues one job (the worker fetches all props anyway).
   const seenObjectIds = new Set<string>();
   const payloads: Record<string, unknown>[] = [];
 
@@ -529,7 +527,6 @@ async function handleHubspotContactWebhook(req: Request, res: Response): Promise
   const syncIdQuery = typeof req.query.syncId === "string" ? Number(req.query.syncId) : NaN;
   const syncIdQueryOverride = Number.isFinite(syncIdQuery) ? syncIdQuery : undefined;
 
-  // Acknowledge once, then schedule jobs for every distinct contact in the batch.
   res.status(200).json({ accepted: true, contactsQueued: payloads.length });
   await Promise.all(
     payloads.map((payload) => scheduleJobsForEvent(syncIdQueryOverride, "hubspot", wixSiteId, payload)),

@@ -258,8 +258,6 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
     }
   }
   if (event.source === "wix" && wixContactId) {
-    // Wix automations often send only metadata (exp, iat) without contact fields.
-    // Fetch the full contact from Wix so field mappings have real data to work with.
     const enriched = await getWixContactProperties(event.wixSiteId, wixContactId);
     if (enriched) {
       sourcePayload = { ...enriched, ...event.payload };

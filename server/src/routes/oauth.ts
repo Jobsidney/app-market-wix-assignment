@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { logger } from "../lib/logger.js";
 import { exchangeAuthCode } from "../services/hubspot-auth.js";
 
 export const oauthRouter = Router();
@@ -14,10 +15,14 @@ function readSingleQueryValue(value: unknown): string | null {
   return null;
 }
 
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function renderOauthCallbackPage(connected: boolean, details?: string): string {
   const statusText = connected ? "HubSpot connected successfully. You can return to Wix now." : "HubSpot connection failed.";
   const statusPayload = connected ? "connected" : "error";
-  const extraDetails = !connected && details ? `<p class="hint">${details}</p>` : "";
+  const extraDetails = !connected && details ? `<p class="hint">${escapeHtml(details)}</p>` : "";
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -78,11 +83,11 @@ oauthRouter.get("/hubspot/callback", async (req, res, next) => {
     res.status(200).type("html").send(renderOauthCallbackPage(true));
   } catch (error) {
     const message = error instanceof Error && error.message ? error.message : "Unknown OAuth callback error.";
-    console.error("HubSpot OAuth callback failed", {
+    logger.error({
       message,
       codePresent: Boolean(readSingleQueryValue(req.query.code)),
       statePresent: Boolean(readSingleQueryValue(req.query.state)),
-    });
+    }, "HubSpot OAuth callback failed");
     res.status(200).type("html").send(renderOauthCallbackPage(false, message));
   }
 });

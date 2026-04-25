@@ -59,7 +59,6 @@ export async function exchangeAuthCode(code: string, wixSiteId: string): Promise
   await db.query("begin");
   try {
     if (hubspotPortalId) {
-      // Reconnect flow: ensure a single portal maps to one site without violating unique portal index.
       await db.query("delete from oauth_installations where wix_site_id = $1 or hubspot_portal_id = $2", [
         wixSiteId,
         hubspotPortalId,

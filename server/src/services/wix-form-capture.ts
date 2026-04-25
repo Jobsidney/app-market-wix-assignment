@@ -46,7 +46,7 @@ export async function ingestFormSubmission(wixSiteId: string, payload: Record<st
   try {
     await upsertHubspotContact(wixSiteId, mappedForHubspot);
   } catch (error) {
-    logger.warn({ wixSubmissionId, error: error instanceof Error ? error.message : "unknown" }, "HubSpot upsert failed");
+    logger.error({ wixSubmissionId, error: error instanceof Error ? error.message : "unknown" }, "HubSpot upsert failed for form submission");
   }
   logger.info({ wixSiteId, wixSubmissionId }, "Stored Wix form submission metadata");
 }
