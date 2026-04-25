@@ -38,10 +38,10 @@ function pickFirstString(...values: Array<unknown>): string | undefined {
 }
 
 function buildWixFallbackHubspotPayload(payload: Record<string, unknown>): Record<string, string> {
-  const email = pickFirstString(payload.email, payload.primaryEmail);
-  const firstname = pickFirstString(payload.firstName, payload.firstname);
-  const lastname = pickFirstString(payload.lastName, payload.lastname);
-  const phone = pickFirstString(payload.phone, payload.mobilePhone);
+  const email = pickFirstString(payload["primaryInfo.email"], payload.email, payload.primaryEmail);
+  const firstname = pickFirstString(payload["contactInfo.firstName"], payload.firstName, payload.firstname);
+  const lastname = pickFirstString(payload["contactInfo.lastName"], payload.lastName, payload.lastname);
+  const phone = pickFirstString(payload["primaryInfo.phone"], payload.phone, payload.mobilePhone);
   const fallback: Record<string, string> = {};
   if (email) fallback.email = email;
   if (firstname) fallback.firstname = firstname;
@@ -263,6 +263,9 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
     const enriched = await getWixContactProperties(event.wixSiteId, wixContactId);
     if (enriched) {
       sourcePayload = { ...enriched, ...event.payload };
+      logger.info({ wixContactId, enrichedKeys: Object.keys(enriched) }, "Wix contact enrichment succeeded");
+    } else {
+      logger.warn({ wixContactId, wixSiteId: event.wixSiteId }, "Wix contact enrichment returned null — Wix API may have rejected the fetch");
     }
   }
   const transformed =
