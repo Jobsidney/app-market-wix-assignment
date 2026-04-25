@@ -2,18 +2,12 @@ import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 import { deepEqual } from "./idempotency.js";
 import { listFieldMappings } from "./field-mapping-repo.js";
-import {
-  deleteSyncMappingByWixContactId,
-  getSyncMappingByHubspotId,
-  getSyncMappingByWixId,
-  upsertSyncMapping,
-} from "./sync-mapping-repo.js";
+import { getSyncMappingByHubspotId, getSyncMappingByWixId, upsertSyncMapping } from "./sync-mapping-repo.js";
 import { transformByPersistedMappings } from "./mapping-transformer.js";
 import { getHubspotContactProperties, upsertHubspotContact } from "./hubspot-contacts.js";
 import {
   applyInboundHubspotToWixContact,
   createWixContactFromHubspotPayload,
-  findWixContactIdByPrimaryEmail,
   hasWixContact,
 } from "./wix-contacts-api.js";
 
@@ -79,43 +73,6 @@ function mergeMissingHubspotContactBasics(
   }
   if (!outboundLastName) {
     const fallbackLastName = pickFirstString(sourcePayload.lastname, sourcePayload.lastName);
-    if (fallbackLastName) {
-      merged.lastname = fallbackLastName;
-    }
-  }
-  if (!outboundPhone) {
-    const fallbackPhone = pickFirstString(sourcePayload.phone, sourcePayload.mobilePhone);
-    if (fallbackPhone) {
-      merged.phone = fallbackPhone;
-    }
-  }
-  return merged;
-}
-
-function mergeMissingWixContactBasics(
-  outbound: Record<string, unknown>,
-  sourcePayload: Record<string, unknown>,
-): Record<string, unknown> {
-  const merged: Record<string, unknown> = { ...outbound };
-  const outboundEmail = pickFirstString(merged.email, merged.primaryEmail);
-  const outboundFirstName = pickFirstString(merged.firstname, merged.firstName);
-  const outboundLastName = pickFirstString(merged.lastname, merged.lastName);
-  const outboundPhone = pickFirstString(merged.phone, merged.mobilePhone);
-
-  if (!outboundEmail) {
-    const fallbackEmail = pickFirstString(sourcePayload.email, sourcePayload.primaryEmail);
-    if (fallbackEmail) {
-      merged.email = fallbackEmail;
-    }
-  }
-  if (!outboundFirstName) {
-    const fallbackFirstName = pickFirstString(sourcePayload.firstName, sourcePayload.firstname);
-    if (fallbackFirstName) {
-      merged.firstname = fallbackFirstName;
-    }
-  }
-  if (!outboundLastName) {
-    const fallbackLastName = pickFirstString(sourcePayload.lastName, sourcePayload.lastname);
     if (fallbackLastName) {
       merged.lastname = fallbackLastName;
     }
@@ -245,20 +202,6 @@ function extractWixContactId(payload: Record<string, unknown>, fallbackId?: stri
   return "";
 }
 
-function outboundEmailForLookup(outbound: Record<string, unknown>): string | undefined {
-  if (typeof outbound.email === "string" && outbound.email.trim()) {
-    return outbound.email.trim().toLowerCase();
-  }
-  const primary = outbound.primaryInfo;
-  if (primary && typeof primary === "object" && !Array.isArray(primary)) {
-    const e = (primary as Record<string, unknown>).email;
-    if (typeof e === "string" && e.trim()) {
-      return e.trim().toLowerCase();
-    }
-  }
-  return undefined;
-}
-
 export async function processSyncEvent(event: IncomingEvent): Promise<void> {
   const resolvedWixContactId = extractWixContactId(event.payload, event.wixContactId);
   if (event.source === "wix" && !resolvedWixContactId) {
@@ -289,13 +232,11 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
     }
   }
 
-  if (event.source === "wix") {
-    const eventUpdatedAt = event.updatedAt ? new Date(event.updatedAt).getTime() : Date.now();
-    const lastSyncedAt = mapping ? new Date(mapping.lastSyncedAt).getTime() : 0;
-    if (lastSyncedAt && eventUpdatedAt <= lastSyncedAt) {
-      logger.info({ wixContactId: wixContactId || hubspotContactId }, "Conflict handling: skipped older Wix-originated event");
-      return;
-    }
+  const eventUpdatedAt = event.updatedAt ? new Date(event.updatedAt).getTime() : Date.now();
+  const lastSyncedAt = mapping ? new Date(mapping.lastSyncedAt).getTime() : 0;
+  if (lastSyncedAt && eventUpdatedAt <= lastSyncedAt) {
+    logger.info({ wixContactId: wixContactId || hubspotContactId }, "Conflict handling: skipped older event");
+    return;
   }
 
   const fieldRows = await listFieldMappings(event.wixSiteId, event.syncId);
@@ -323,7 +264,7 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
   let outbound =
     event.source === "hubspot"
       ? mergeMissingHubspotContactBasics(transformed, sourcePayload)
-      : mergeMissingWixContactBasics(transformed, sourcePayload);
+      : transformed;
   if (Object.keys(outbound).length === 0 && event.source === "wix") {
     outbound = buildWixFallbackHubspotPayload(sourcePayload);
   }
@@ -358,35 +299,17 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
     if (!contactExistsOnCurrentSite) {
       logger.warn(
         { wixId, hubspotContactId, wixSiteId: event.wixSiteId },
-        "HubSpot→Wix: mapped Wix contact not found on current site; clearing stale mapping and falling back to create or link-by-email",
+        "HubSpot→Wix: mapped Wix contact not found on current site; falling back to create",
       );
-      await deleteSyncMappingByWixContactId(wixId);
       wixId = "";
     }
   }
 
   if (!wixId && hubspotContactId) {
-    let created: string | null = null;
-    let createFailureMessage = "";
-    try {
-      created = await createWixContactFromHubspotPayload(event.wixSiteId, hubspotContactId, outbound);
-    } catch (error) {
-      createFailureMessage = error instanceof Error ? error.message : "Unknown Wix create error";
-    }
-    if (!created) {
-      const emailKey = outboundEmailForLookup(outbound);
-      if (emailKey) {
-        const existingId = await findWixContactIdByPrimaryEmail(event.wixSiteId, emailKey);
-        if (existingId) {
-          created = await applyInboundHubspotToWixContact(event.wixSiteId, existingId, outbound);
-        }
-      }
-    }
+    const created = await createWixContactFromHubspotPayload(event.wixSiteId, hubspotContactId, outbound);
     if (!created) {
       throw new Error(
-        createFailureMessage
-          ? `HubSpot→Wix create failed: ${createFailureMessage}`
-          : "HubSpot→Wix create failed: unable to create Wix contact (check WIX_API_KEY/site permissions and mapped email/name/phone fields)",
+        "HubSpot→Wix create failed: unable to create Wix contact (check WIX_API_KEY/site permissions and mapped email/name/phone fields)",
       );
     }
     wixId = created;

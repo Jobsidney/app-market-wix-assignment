@@ -1,5 +1,4 @@
 import { db } from "../lib/db.js";
-import { assertValidWixMetaSiteId } from "../lib/wix-site-id.js";
 
 export interface SyncDefinition {
   id: number;
@@ -181,7 +180,6 @@ export async function getSyncDefinitionById(wixSiteId: string, syncId: number): 
 }
 
 export async function createSyncDefinition(wixSiteId: string, name: string): Promise<SyncDefinition> {
-  assertValidWixMetaSiteId(wixSiteId, "createSyncDefinition");
   const nextName = await ensureUniqueSyncName(wixSiteId, name);
   const result = await db.query<SyncDefinitionRow>(
     `insert into sync_definitions (wix_site_id, name)
@@ -256,7 +254,6 @@ export async function deleteSyncDefinition(wixSiteId: string, syncId: number): P
 }
 
 export async function getDefaultSyncId(wixSiteId: string): Promise<number> {
-  assertValidWixMetaSiteId(wixSiteId, "getDefaultSyncId");
   const existing = await db.query<{ id: number }>(
     "select id from sync_definitions where wix_site_id = $1 order by created_at asc limit 1",
     [wixSiteId],

@@ -3,7 +3,6 @@ import { logger } from "../lib/logger.js";
 import { upsertWixContactShadow } from "./wix-contacts-shadow.js";
 
 const CONTACTS_V4 = "https://www.wixapis.com/contacts/v4/contacts";
-const CONTACTS_QUERY_V4 = "https://www.wixapis.com/contacts/v4/contacts/query";
 
 function parseObjectLikeJson(value: string): Record<string, unknown> | null {
   try {
@@ -40,7 +39,7 @@ function deriveAccountIdFromApiKey(apiKey: string): string | undefined {
   return typeof id === "string" && id.trim().length > 0 ? id.trim() : undefined;
 }
 
-function wixHeaders(siteId: string, includeAccountId = true): Record<string, string> | null {
+function wixHeaders(siteId: string): Record<string, string> | null {
   if (!env.WIX_API_KEY) {
     return null;
   }
@@ -48,22 +47,10 @@ function wixHeaders(siteId: string, includeAccountId = true): Record<string, str
   return {
     Authorization: env.WIX_API_KEY,
     "wix-site-id": siteId,
-    ...(includeAccountId && accountId ? { "wix-account-id": accountId } : {}),
+    ...(accountId ? { "wix-account-id": accountId } : {}),
     "Content-Type": "application/json",
     Accept: "application/json",
   };
-}
-
-function shouldRetryWithoutAccountId(status: number, bodyText: string): boolean {
-  if (status !== 400 && status !== 404) {
-    return false;
-  }
-  const lowered = bodyText.toLowerCase();
-  return lowered.includes("metasite_and_account_mismatch") || lowered.includes("meta-site") || lowered.includes("site owning account");
-}
-
-function truncateForLog(value: string, max = 400): string {
-  return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
 function readStr(obj: unknown, path: string): string | undefined {
@@ -114,28 +101,13 @@ export function buildWixContactInfoPatch(payload: Record<string, unknown>): Reco
 }
 
 async function fetchContactRevision(wixSiteId: string, contactId: string): Promise<number | null> {
-  const primaryHeaders = wixHeaders(wixSiteId, true);
-  if (!primaryHeaders) {
+  const headers = wixHeaders(wixSiteId);
+  if (!headers) {
     return null;
   }
-  let res = await fetch(`${CONTACTS_V4}/${encodeURIComponent(contactId)}`, { method: "GET", headers: primaryHeaders });
+  const res = await fetch(`${CONTACTS_V4}/${encodeURIComponent(contactId)}`, { method: "GET", headers });
   if (!res.ok) {
-    const text = await res.text();
-    if (shouldRetryWithoutAccountId(res.status, text)) {
-      const retryHeaders = wixHeaders(wixSiteId, false);
-      if (retryHeaders) {
-        res = await fetch(`${CONTACTS_V4}/${encodeURIComponent(contactId)}`, { method: "GET", headers: retryHeaders });
-      }
-    } else {
-      const snippet = text.length > 400 ? `${text.slice(0, 400)}…` : text;
-      logger.warn({ contactId, status: res.status, text: snippet }, "Wix GET contact failed");
-      return null;
-    }
-  }
-  if (!res.ok) {
-    const text = await res.text();
-    const snippet = text.length > 400 ? `${text.slice(0, 400)}…` : text;
-    logger.warn({ contactId, status: res.status, text: snippet }, "Wix GET contact failed");
+    logger.warn({ contactId, status: res.status }, "Wix GET contact failed");
     return null;
   }
   const json = (await res.json()) as { revision?: number; contact?: { revision?: number } };
@@ -148,47 +120,6 @@ export async function hasWixContact(wixSiteId: string, contactId: string): Promi
   return revision !== null;
 }
 
-export async function findWixContactIdByPrimaryEmail(wixSiteId: string, email: string): Promise<string | null> {
-  const normalized = email.trim().toLowerCase();
-  if (!normalized) {
-    return null;
-  }
-  const primaryHeaders = wixHeaders(wixSiteId, true);
-  if (!primaryHeaders) {
-    return null;
-  }
-  const body = JSON.stringify({
-    query: {
-      filter: { "info.emails.email": normalized },
-      paging: { limit: 5, offset: 0 },
-      fieldsets: ["BASIC"],
-    },
-  });
-  let res = await fetch(CONTACTS_QUERY_V4, { method: "POST", headers: primaryHeaders, body });
-  if (!res.ok) {
-    const text = await res.text();
-    if (shouldRetryWithoutAccountId(res.status, text)) {
-      const retryHeaders = wixHeaders(wixSiteId, false);
-      if (retryHeaders) {
-        res = await fetch(CONTACTS_QUERY_V4, { method: "POST", headers: retryHeaders, body });
-      }
-    } else {
-      const snippet = text.length > 400 ? `${text.slice(0, 400)}…` : text;
-      logger.warn({ email: normalized, status: res.status, text: snippet }, "Wix query contact by email failed");
-      return null;
-    }
-  }
-  if (!res.ok) {
-    const text = await res.text();
-    const snippet = text.length > 400 ? `${text.slice(0, 400)}…` : text;
-    logger.warn({ email: normalized, status: res.status, text: snippet }, "Wix query contact by email failed");
-    return null;
-  }
-  const json = (await res.json()) as { contacts?: Array<{ id?: string }> };
-  const id = json.contacts?.[0]?.id;
-  return typeof id === "string" && id.trim() ? id.trim() : null;
-}
-
 export async function createWixContactFromHubspotPayload(
   wixSiteId: string,
   hubspotContactId: string,
@@ -196,60 +127,21 @@ export async function createWixContactFromHubspotPayload(
 ): Promise<string | null> {
   const shadowKey = `hubspot-${hubspotContactId}`;
   await upsertWixContactShadow(wixSiteId, shadowKey, transformedPayload);
-  const primaryHeaders = wixHeaders(wixSiteId, true);
-  if (!primaryHeaders) {
-    throw new Error("WIX_API_KEY is missing; cannot create Wix contact from HubSpot payload");
+  const headers = wixHeaders(wixSiteId);
+  if (!headers) {
+    logger.info({ hubspotContactId }, "WIX_API_KEY unset; HubSpot→Wix create skipped after shadow write");
+    return null;
   }
   const info = buildWixContactInfoPatch(transformedPayload);
   if (Object.keys(info).length === 0) {
-    throw new Error("Cannot create Wix contact: mapped payload has no name, email, or phone");
+    logger.warn({ hubspotContactId }, "Cannot create Wix contact: mapped payload has no name, email, or phone");
+    return null;
   }
-  let res = await fetch(CONTACTS_V4, {
+  const res = await fetch(CONTACTS_V4, {
     method: "POST",
-    headers: primaryHeaders,
+    headers,
     body: JSON.stringify({ info, allowDuplicates: true }),
   });
-  if (!res.ok) {
-    const firstText = await res.text();
-    if (shouldRetryWithoutAccountId(res.status, firstText)) {
-      const retryHeaders = wixHeaders(wixSiteId, false);
-      if (retryHeaders) {
-        res = await fetch(CONTACTS_V4, {
-          method: "POST",
-          headers: retryHeaders,
-          body: JSON.stringify({ info, allowDuplicates: true }),
-        });
-      } else {
-        throw new Error("Wix create retry skipped: missing headers");
-      }
-    } else {
-      const responseHeaders = Object.fromEntries(res.headers.entries());
-      const safeHeaders = {
-        "x-wix-request-id": responseHeaders["x-wix-request-id"],
-        "x-wix-error-code": responseHeaders["x-wix-error-code"],
-        "x-wix-service-id": responseHeaders["x-wix-service-id"],
-        "content-type": responseHeaders["content-type"],
-      };
-      logger.warn(
-        {
-          hubspotContactId,
-          status: res.status,
-          text: truncateForLog(firstText),
-          wixSiteId,
-          hasWixApiKey: Boolean(env.WIX_API_KEY),
-          hasWixAccountId: Boolean(env.WIX_ACCOUNT_ID),
-          requestHeaders: {
-            hasAuthorization: Boolean(primaryHeaders.Authorization),
-            hasWixSiteId: Boolean(primaryHeaders["wix-site-id"]),
-            hasWixAccountId: Boolean(primaryHeaders["wix-account-id"]),
-          },
-          responseHeaders: safeHeaders,
-        },
-        "Wix POST create contact failed",
-      );
-      throw new Error(`Wix POST create contact failed (${res.status}): ${truncateForLog(firstText)}`);
-    }
-  }
   if (!res.ok) {
     const text = await res.text();
     const responseHeaders = Object.fromEntries(res.headers.entries());
@@ -263,25 +155,26 @@ export async function createWixContactFromHubspotPayload(
       {
         hubspotContactId,
         status: res.status,
-        text: truncateForLog(text),
+        text,
         wixSiteId,
         hasWixApiKey: Boolean(env.WIX_API_KEY),
         hasWixAccountId: Boolean(env.WIX_ACCOUNT_ID),
         requestHeaders: {
-          hasAuthorization: Boolean(primaryHeaders.Authorization),
-          hasWixSiteId: Boolean(primaryHeaders["wix-site-id"]),
-          hasWixAccountId: Boolean(primaryHeaders["wix-account-id"]),
+          hasAuthorization: Boolean(headers.Authorization),
+          hasWixSiteId: Boolean(headers["wix-site-id"]),
+          hasWixAccountId: Boolean(headers["wix-account-id"]),
         },
         responseHeaders: safeHeaders,
       },
       "Wix POST create contact failed",
     );
-    throw new Error(`Wix POST create contact failed (${res.status}): ${truncateForLog(text)}`);
+    return null;
   }
   const json = (await res.json()) as { contact?: { id?: string } };
   const id = json.contact?.id;
   if (!id) {
-    throw new Error("Wix create contact response missing id");
+    logger.warn({ hubspotContactId }, "Wix create contact response missing id");
+    return null;
   }
   await upsertWixContactShadow(wixSiteId, id, transformedPayload);
   return id;
@@ -293,8 +186,8 @@ export async function applyInboundHubspotToWixContact(
   transformedPayload: Record<string, unknown>,
 ): Promise<string> {
   await upsertWixContactShadow(wixSiteId, wixContactId, transformedPayload);
-  const primaryHeaders = wixHeaders(wixSiteId, true);
-  if (!primaryHeaders) {
+  const headers = wixHeaders(wixSiteId);
+  if (!headers) {
     throw new Error("WIX_API_KEY is missing; cannot apply HubSpot→Wix update");
   }
   const info = buildWixContactInfoPatch(transformedPayload);
@@ -305,28 +198,11 @@ export async function applyInboundHubspotToWixContact(
   if (revision === null) {
     throw new Error(`Could not read Wix contact revision for ${wixContactId}`);
   }
-  let res = await fetch(`${CONTACTS_V4}/${encodeURIComponent(wixContactId)}`, {
+  const res = await fetch(`${CONTACTS_V4}/${encodeURIComponent(wixContactId)}`, {
     method: "PATCH",
-    headers: primaryHeaders,
+    headers,
     body: JSON.stringify({ revision, info, allowDuplicates: true }),
   });
-  if (!res.ok) {
-    const firstText = await res.text();
-    if (shouldRetryWithoutAccountId(res.status, firstText)) {
-      const retryHeaders = wixHeaders(wixSiteId, false);
-      if (retryHeaders) {
-        res = await fetch(`${CONTACTS_V4}/${encodeURIComponent(wixContactId)}`, {
-          method: "PATCH",
-          headers: retryHeaders,
-          body: JSON.stringify({ revision, info, allowDuplicates: true }),
-        });
-      } else {
-        throw new Error(`Wix PATCH contact failed (${res.status}): ${firstText}`);
-      }
-    } else {
-      throw new Error(`Wix PATCH contact failed (${res.status}): ${firstText}`);
-    }
-  }
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Wix PATCH contact failed (${res.status}): ${text}`);

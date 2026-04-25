@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { isValidWixMetaSiteId } from "./wix-site-id.js";
 
 function b64UrlToBuffer(segment: string): Buffer {
   const normalized = segment.replace(/-/g, "+").replace(/_/g, "/");
@@ -57,19 +56,6 @@ export function parseWixInstancePayloadUnsigned(instance: string): Record<string
 }
 
 export function getInstanceIdFromPayload(payload: Record<string, unknown>): string | null {
-  const site = payload.site;
-  const candidates: Array<unknown> = [
-    payload.metaSiteId,
-    payload.metasiteId,
-    payload.siteId,
-    site && typeof site === "object" ? (site as Record<string, unknown>).metaSiteId : undefined,
-    site && typeof site === "object" ? (site as Record<string, unknown>).metasiteId : undefined,
-    payload.instanceId,
-  ];
-  for (const value of candidates) {
-    if (typeof value === "string" && value.trim() && isValidWixMetaSiteId(value)) {
-      return value.trim();
-    }
-  }
-  return null;
+  const id = payload.instanceId;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
 }

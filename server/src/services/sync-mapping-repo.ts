@@ -35,10 +35,6 @@ export async function getSyncMappingByHubspotId(hubspotContactId: string): Promi
   return result.rows[0] ? toSyncMapping(result.rows[0]) : null;
 }
 
-export async function deleteSyncMappingByWixContactId(wixContactId: string): Promise<void> {
-  await db.query("delete from sync_mapping where wix_contact_id = $1", [wixContactId]);
-}
-
 export async function upsertSyncMapping(mapping: SyncMapping): Promise<void> {
   await db.query(
     `insert into sync_mapping (wix_contact_id, hubspot_contact_id, last_synced_at, last_sync_source, correlation_id)
