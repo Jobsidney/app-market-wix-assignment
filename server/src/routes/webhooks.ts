@@ -5,6 +5,7 @@ import { getSiteSyncLiveEnabled } from "../services/site-sync-state-repo.js";
 import { verifyWebhookHmac } from "../middleware/verify-webhook-hmac.js";
 import { verifyHubspotSignature } from "../middleware/verify-hubspot-signature.js";
 import { resolveWixSiteIdByHubspotPortalId } from "../services/hubspot-auth.js";
+import { isValidWixMetaSiteId } from "../lib/wix-site-id.js";
 import { listSyncDefinitions } from "../services/sync-definitions-repo.js";
 import { db } from "../lib/db.js";
 
@@ -329,7 +330,24 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
   };
   const wixSiteIdHeader = req.header("x-wix-site-id")?.trim() ?? "";
   const wixSiteIdQuery = typeof req.query.wixSiteId === "string" ? req.query.wixSiteId.trim() : "";
+  const nestedRecord =
+    nestedEvent && typeof nestedEvent === "object" && !Array.isArray(nestedEvent)
+      ? (nestedEvent as Record<string, unknown>)
+      : null;
+  const wixSiteIdFromMeta =
+    readNestedString(enrichedBody, "metaSiteId") ||
+    readNestedString(enrichedBody, "metasiteId") ||
+    readNestedString(enrichedBody, "context.metaSiteId") ||
+    readNestedString(enrichedBody, "context.metasiteId") ||
+    readNestedString(body, "metaSiteId") ||
+    readNestedString(body, "metasiteId") ||
+    (bodyData ? readNestedString(bodyData, "metaSiteId") : "") ||
+    (bodyData ? readNestedString(bodyData, "metasiteId") : "") ||
+    (nestedRecord ? readNestedString(nestedRecord, "metaSiteId") : "") ||
+    (nestedRecord ? readNestedString(nestedRecord, "metasiteId") : "") ||
+    "";
   const wixSiteIdBody =
+    wixSiteIdFromMeta ||
     (typeof body.wixSiteId === "string" ? body.wixSiteId.trim() : "") ||
     (typeof enrichedBody.instanceId === "string" ? enrichedBody.instanceId.trim() : "") ||
     (typeof bodyData?.instanceId === "string" ? bodyData.instanceId.trim() : "");
@@ -338,6 +356,10 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
     res
       .status(400)
       .json({ error: "Missing Wix site id (x-wix-site-id header, wixSiteId query, or wixSiteId body field)" });
+    return;
+  }
+  if (!isValidWixMetaSiteId(wixSiteId)) {
+    res.status(400).json({ error: "Invalid Wix site id (expected meta-site UUID)" });
     return;
   }
   const normalizedPayload: Record<string, unknown> = { ...body };
@@ -440,6 +462,10 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
     return;
   }
   const targetSyncIds = await resolveTargetSyncIds(resolvedWixSiteId, explicitSyncId, "wix");
+  if (targetSyncIds.length === 0) {
+    res.status(200).json({ accepted: true, skipped: "no_live_compatible_sync", syncTargets: 0 });
+    return;
+  }
   res.status(200).json({ accepted: true, syncTargets: targetSyncIds.length });
   await Promise.all(
     targetSyncIds.map((syncId) =>
@@ -473,6 +499,10 @@ async function handleHubspotContactWebhook(req: Request, res: Response): Promise
   const wixSiteId = await resolveWixSiteIdByHubspotPortalId(portalId);
   if (!wixSiteId) {
     res.status(404).json({ error: "No Wix installation mapped for incoming HubSpot portal" });
+    return;
+  }
+  if (!isValidWixMetaSiteId(wixSiteId)) {
+    res.status(500).json({ error: "OAuth mapping has invalid wix_site_id; reconnect HubSpot from the Wix dashboard" });
     return;
   }
   await db.query(

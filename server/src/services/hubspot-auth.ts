@@ -3,6 +3,7 @@ import { db } from "../lib/db.js";
 import { decrypt, encrypt } from "../lib/crypto.js";
 import { decodeAccessTokenFromStorage, encodeAccessTokenForStorage } from "../lib/access-token-storage.js";
 import { env } from "../config/env.js";
+import { assertValidWixMetaSiteId } from "../lib/wix-site-id.js";
 
 interface InstallationRecord {
   wix_site_id: string;
@@ -33,6 +34,7 @@ async function fetchHubspotPortalId(accessToken: string): Promise<string | null>
 }
 
 export async function exchangeAuthCode(code: string, wixSiteId: string): Promise<void> {
+  assertValidWixMetaSiteId(wixSiteId, "exchangeAuthCode");
   const response = await createHubspotClient().oauth.tokensApi.create(
     "authorization_code",
     code,
