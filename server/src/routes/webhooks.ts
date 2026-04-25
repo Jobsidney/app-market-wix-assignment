@@ -205,27 +205,23 @@ function parseRawWebhookBody(req: Request): Record<string, unknown> | null {
   return null;
 }
 
-async function enqueueIncomingEvent(
-  req: Request,
-  res: Response,
+async function scheduleJobsForEvent(
+  syncIdQueryOverride: number | undefined,
   source: SyncSource,
   wixSiteId: string,
   body: Record<string, unknown>,
-): Promise<void> {
-  const syncIdQuery = typeof req.query.syncId === "string" ? Number(req.query.syncId) : NaN;
+): Promise<{ syncTargets: number; skipped?: string }> {
   const syncIdBody = typeof body.syncId === "number" ? body.syncId : Number(body.syncId ?? NaN);
   const explicitSyncId = Number.isFinite(syncIdBody)
     ? syncIdBody
-    : Number.isFinite(syncIdQuery)
-      ? syncIdQuery
+    : Number.isFinite(syncIdQueryOverride)
+      ? syncIdQueryOverride
       : undefined;
   const resolvedWixSiteId = await resolveWixSiteIdForSync(wixSiteId, explicitSyncId);
   if (!(await getSiteSyncLiveEnabled(resolvedWixSiteId))) {
-    res.status(200).json({ accepted: true, skipped: "sync_paused" });
-    return;
+    return { syncTargets: 0, skipped: "sync_paused" };
   }
   const targetSyncIds = await resolveTargetSyncIds(resolvedWixSiteId, explicitSyncId, source);
-  res.status(200).json({ accepted: true, syncTargets: targetSyncIds.length });
   await Promise.all(
     targetSyncIds.map((syncId) =>
       enqueueJob(
@@ -236,7 +232,9 @@ async function enqueueIncomingEvent(
       ),
     ),
   );
+  return { syncTargets: targetSyncIds.length };
 }
+
 
 async function resolveTargetSyncIds(
   wixSiteId: string,
@@ -265,6 +263,12 @@ async function resolveTargetSyncIds(
     .filter((id) => Number.isFinite(id));
   if (liveSyncIds.length > 0) {
     return liveSyncIds;
+  }
+  // For wix-source events fall back to the default sync (preserves existing behaviour).
+  // For hubspot-source events, return empty if no compatible sync exists — routing a
+  // hubspot event to a wix_to_hubspot-only sync would silently skip all field mappings.
+  if (source === "hubspot") {
+    return [];
   }
   return [await getDefaultSyncId(wixSiteId)];
 }
@@ -455,8 +459,8 @@ async function handleHubspotContactWebhook(req: Request, res: Response): Promise
     res.status(400).json({ error: "Invalid HubSpot webhook payload item" });
     return;
   }
-  const event = first as Record<string, unknown>;
-  const portalId = String(event.portalId ?? event.portal_id ?? "").trim();
+  const firstEvent = first as Record<string, unknown>;
+  const portalId = String(firstEvent.portalId ?? firstEvent.portal_id ?? "").trim();
   if (!portalId) {
     res.status(400).json({ error: "Missing portalId in HubSpot webhook payload" });
     return;
@@ -474,30 +478,62 @@ async function handleHubspotContactWebhook(req: Request, res: Response): Promise
        and (hubspot_portal_id is distinct from $2)`,
     [wixSiteId, portalId],
   );
-  const payload: Record<string, unknown> = {
-    source: "hubspot",
-    hubspotContactId:
+
+  // Deduplicate by objectId so a batch with multiple property-change events
+  // for the same contact only enqueues one job (the worker fetches all props anyway).
+  const seenObjectIds = new Set<string>();
+  const payloads: Record<string, unknown>[] = [];
+
+  for (const item of body) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const event = item as Record<string, unknown>;
+    const objectIdRaw =
       event.objectId !== undefined || event.object_id !== undefined
         ? String(event.objectId ?? event.object_id).trim()
-        : undefined,
-    updatedAt: event.occurredAt ?? event.occurred_at ?? undefined,
-    hubspotPortalId: portalId,
-  };
-  const eventSyncId =
-    typeof event.syncId === "number"
-      ? event.syncId
-      : typeof event.sync_id === "number"
-        ? event.sync_id
-        : Number(event.syncId ?? event.sync_id ?? NaN);
-  if (Number.isFinite(eventSyncId)) {
-    payload.syncId = Number(eventSyncId);
+        : "";
+    if (!objectIdRaw || seenObjectIds.has(objectIdRaw)) {
+      continue;
+    }
+    seenObjectIds.add(objectIdRaw);
+
+    const payload: Record<string, unknown> = {
+      source: "hubspot",
+      hubspotContactId: objectIdRaw,
+      updatedAt: event.occurredAt ?? event.occurred_at ?? undefined,
+      hubspotPortalId: portalId,
+    };
+    const eventSyncId =
+      typeof event.syncId === "number"
+        ? event.syncId
+        : typeof event.sync_id === "number"
+          ? event.sync_id
+          : Number(event.syncId ?? event.sync_id ?? NaN);
+    if (Number.isFinite(eventSyncId)) {
+      payload.syncId = Number(eventSyncId);
+    }
+    const propertyName = typeof event.propertyName === "string" ? event.propertyName : undefined;
+    const propertyValue = event.propertyValue;
+    if (propertyName && propertyValue !== undefined) {
+      payload[propertyName] = propertyValue;
+    }
+    payloads.push(payload);
   }
-  const propertyName = typeof event.propertyName === "string" ? event.propertyName : undefined;
-  const propertyValue = event.propertyValue;
-  if (propertyName && propertyValue !== undefined) {
-    payload[propertyName] = propertyValue;
+
+  if (payloads.length === 0) {
+    res.status(200).json({ accepted: true, syncTargets: 0 });
+    return;
   }
-  await enqueueIncomingEvent(req, res, "hubspot", wixSiteId, payload);
+
+  const syncIdQuery = typeof req.query.syncId === "string" ? Number(req.query.syncId) : NaN;
+  const syncIdQueryOverride = Number.isFinite(syncIdQuery) ? syncIdQuery : undefined;
+
+  // Acknowledge once, then schedule jobs for every distinct contact in the batch.
+  res.status(200).json({ accepted: true, contactsQueued: payloads.length });
+  await Promise.all(
+    payloads.map((payload) => scheduleJobsForEvent(syncIdQueryOverride, "hubspot", wixSiteId, payload)),
+  );
 }
 
 webhooksRouter.post("/wix/contact-updated", async (req, res, next) => {

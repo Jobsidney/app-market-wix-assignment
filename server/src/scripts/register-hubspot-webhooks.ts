@@ -21,6 +21,14 @@ async function main(): Promise<void> {
     ? new Client({ developerApiKey: devKey })
     : new Client({ accessToken: await getValidAccessToken(wixSiteId) });
 
+  // Subscribe to contact.creation so any new HubSpot contact triggers a sync,
+  // regardless of which properties are set at creation time.
+  const creation = await client.webhooks.subscriptionsApi.create(appId, {
+    eventType: SubscriptionCreateRequestEventTypeEnum.ContactCreation,
+    active: true,
+  });
+  console.log("Created subscription:", creation.id, creation.eventType, creation.active);
+
   const properties = (process.env.HUBSPOT_WEBHOOK_PROPERTIES?.trim() || "email,firstname,lastname,phone,jobtitle")
     .split(",")
     .map((p) => p.trim())
