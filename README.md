@@ -24,7 +24,7 @@ Production-style Wix CLI integration that connects Wix and HubSpot for secure OA
 
 ### 3) GitHub repository
 
-- Repo URL: `[ADD_GITHUB_REPO_URL](https://github.com/Jobsidney/app-market-wix-assignment/tree/Development)`
+- Repo URL: https://github.com/Jobsidney/app-market-wix-assignment/tree/Development
 
 ### 4) Test environments
 
@@ -53,7 +53,13 @@ Use this section if you are testing the project for the first time and need all 
 
 ### A) Environment variables checklist
 
-Create `server/.env` and add:
+Copy the root `.env.example` to `.env` (this file lives at `app-market/.env`, not inside `server/`):
+
+```bash
+cp .env.example .env
+```
+
+Then fill in the required values:
 
 ```bash
 # Required for backend boot
@@ -76,10 +82,10 @@ WIX_ACCOUNT_ID=<wix-account-id-decoded-from-WIX_API_KEY-jwt>
 # WIX_CANONICAL_SITE_ID — DO NOT SET IN PRODUCTION (dev/single-site only)
 HUBSPOT_APP_ID=<optional-for-webhook-registration-script>
 HUBSPOT_DEVELOPER_API_KEY=<optional-for-webhook-registration-script>
-SYNC_SECURITY_MODE=locked
+SYNC_SECURITY_MODE=standard
 ```
 
-Create root `.env` (for frontend runtime values sent by Vite):
+Copy the frontend env template:
 
 ```bash
 PUBLIC_DEFAULT_WIX_SITE_ID=<optional-local-site-id-fallback>
@@ -193,12 +199,20 @@ Optional CLI registration:
 npm run hubspot:register-webhooks -- --wix-site-id=<your_wix_instance_id>
 ```
 
-#### Wix -> backend contact webhook (Automations)
+#### Wix -> backend contact webhook
 
 - Endpoint: `POST /webhooks/wix/contact-updated`
 - Production URL: `https://app-market-wix-assignment-production.up.railway.app/webhooks/wix/contact-updated`
 
-In Wix Automations (Trigger: "Contact is created or updated" → Action: "Send HTTP request"):
+**Primary (multi-tenant): Wix Dev Center app-level webhooks**
+
+Configure in [Wix Dev Center](https://dev.wix.com) → your app → Webhooks → add a Contact Created/Updated webhook pointing to the endpoint above. Dev Center webhooks fire automatically for **every site** that installs the app — no per-site Automation setup needed. The webhook body includes the site's `instanceId` so the backend can route the event to the correct tenant.
+
+Authentication for Dev Center webhooks: the backend verifies the `x-wix-signature` header (HMAC-SHA256 of raw body using `WIX_APP_SECRET`). No extra query params needed.
+
+**Fallback (per-site): Wix Automations**
+
+For sites using Wix Automations (Trigger: "Contact is created or updated" → Action: "Send HTTP request"):
 - Wix Automations does **not** support custom headers in the HTTP request action.
 - Pass `wixSiteId` and `wixKey` as **URL query parameters** instead:
   ```
@@ -206,7 +220,7 @@ In Wix Automations (Trigger: "Contact is created or updated" → Action: "Send H
   ```
 - The request body should be sent as JSON with the contact payload. The backend deep-scans the body for email, first name, last name, phone, and contact ID across many known Wix Automation payload shapes.
 
-> **Why query params?** Wix Automations "Send HTTP request" only allows setting the URL and body — no custom header support. The `?wixKey=` query param is the supported fallback for `WIX_AUTOMATION_WEBHOOK_KEY` authentication.
+> **Why query params for Automations?** Wix Automations "Send HTTP request" only allows setting the URL and body — no custom header support. The `?wixKey=` query param is the supported fallback for `WIX_AUTOMATION_WEBHOOK_KEY` authentication.
 
 #### Wix form -> backend lead capture
 
@@ -300,11 +314,12 @@ This powers Feature #2 (Wix form capture -> HubSpot upsert + attribution persist
 
 ## Data Model
 
-- `oauth_installations` — per-site HubSpot OAuth tokens + portal ID
+- `oauth_installations` — per-site HubSpot OAuth tokens + portal ID + `wix_meta_site_id` (resolved from instance JWT at OAuth time)
+- `site_meta` — maps `wix_site_id` (instanceId) → `wix_meta_site_id` for sites installed via APP_INSTALLED lifecycle event
 - `field_mappings` — per-site field mapping rules (direction, transform)
 - `sync_definitions` — per-site sync configuration (entity types, direction, existing-record policy, `live` flag)
 - `sync_mapping` — bidirectional Wix↔HubSpot contact ID mapping, scoped per `wix_site_id`
-- `sync_jobs` — async job queue for sync events (status: `pending → done/failed`)
+- `sync_jobs` — async job queue for sync events (status: `queued → processing → done/failed`)
 - `site_sync_state` — per-site global sync on/off toggle
 - `form_submission_events` — form capture attribution data (UTMs, page URL, referrer)
 - `wix_contacts_shadow` — local shadow of Wix contacts for inbound HubSpot sync observability
@@ -314,23 +329,29 @@ This powers Feature #2 (Wix form capture -> HubSpot upsert + attribution persist
 
 ### Evaluator quickstart (recommended)
 
+All commands run from the `app-market/` directory.
+
 1. Copy env templates:
-   - `cp .env.example .env`
-   - `cp .env.local.example .env.local`
+   ```bash
+   cp .env.example .env
+   cp .env.local.example .env.local
+   ```
+   > Both `.env` files live at the root `app-market/` level — **not** inside `server/`. The backend reads `.env` from the working directory when started with `npm run dev:server`.
 2. Fill required values in `.env`:
-   - `DATABASE_URL`
-   - `ENCRYPTION_KEY` (32+ chars)
-   - `HUBSPOT_CLIENT_ID`
-   - `HUBSPOT_CLIENT_SECRET`
-   - `HUBSPOT_REDIRECT_URI` (use `http://localhost:8787/oauth/hubspot/callback` for local)
+   - `DATABASE_URL` — local Postgres connection string (create a DB first: `createdb app_market`)
+   - `ENCRYPTION_KEY` — any 32+ character random string
+   - `HUBSPOT_CLIENT_ID` + `HUBSPOT_CLIENT_SECRET` — from HubSpot developer app → Auth tab
+   - `HUBSPOT_REDIRECT_URI=http://localhost:8787/oauth/hubspot/callback`
 3. Pick one auth mode:
-   - **Recommended:** set `WIX_APP_SECRET`
+   - **Recommended:** set `WIX_APP_SECRET` (from Wix Dev Center → your app → OAuth → App secret)
    - **Fallback/demo:** leave `WIX_APP_SECRET` empty and set `APP_MARKET_API_KEY` (+ `PUBLIC_APP_MARKET_API_KEY` in `.env.local`)
 4. Run:
-   - `npm install`
-   - `npm run migrate:server`
-   - `npm run dev:server`
-   - `npm run dev`
+   ```bash
+   npm install
+   npm run migrate:server
+   npm run dev:server   # starts backend on port 8787
+   npm run dev          # starts Wix CLI app (requires Wix account)
+   ```
 
 ### Full environment reference
 
