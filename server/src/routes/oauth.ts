@@ -79,12 +79,15 @@ oauthRouter.get("/hubspot/callback", async (req, res, _next) => {
     }
 
     const code = readSingleQueryValue(req.query.code);
-    const wixSiteId = readSingleQueryValue(req.query.state);
-    if (!code || !wixSiteId) {
+    const rawState = readSingleQueryValue(req.query.state);
+    if (!code || !rawState) {
       res.status(400).type("html").send(renderOauthCallbackPage(false, "Missing OAuth code or state."));
       return;
     }
-    await exchangeAuthCode(code, wixSiteId);
+    const separatorIndex = rawState.indexOf("::");
+    const wixSiteId = separatorIndex > 0 ? rawState.slice(0, separatorIndex) : rawState;
+    const metaSiteId = separatorIndex > 0 ? rawState.slice(separatorIndex + 2) : undefined;
+    await exchangeAuthCode(code, wixSiteId, metaSiteId);
     res.status(200).type("html").send(renderOauthCallbackPage(true));
   } catch (error) {
     const message = error instanceof Error && error.message ? error.message : "Unknown OAuth callback error.";

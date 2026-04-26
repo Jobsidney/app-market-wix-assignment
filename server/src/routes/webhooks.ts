@@ -386,6 +386,7 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
     readMeaningfulString(enrichedBody.firstName) ||
     resolveFromTokenPath(enrichedBody, enrichedBody.firstName) ||
     readNestedString(enrichedBody, "data.firstName") ||
+    readNestedString(enrichedBody, "data.contact.name.first") ||
     readNestedString(enrichedBody, "payload.firstName") ||
     readNestedString(enrichedBody, "contact.firstName") ||
     readNestedString(enrichedBody, "contact.name.first") ||
@@ -402,6 +403,7 @@ async function handleWixContactWebhook(req: Request, res: Response): Promise<voi
     readMeaningfulString(enrichedBody.lastName) ||
     resolveFromTokenPath(enrichedBody, enrichedBody.lastName) ||
     readNestedString(enrichedBody, "data.lastName") ||
+    readNestedString(enrichedBody, "data.contact.name.last") ||
     readNestedString(enrichedBody, "payload.lastName") ||
     readNestedString(enrichedBody, "contact.lastName") ||
     readNestedString(enrichedBody, "contact.name.last") ||

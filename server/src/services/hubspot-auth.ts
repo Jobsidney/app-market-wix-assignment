@@ -32,7 +32,7 @@ async function fetchHubspotPortalId(accessToken: string): Promise<string | null>
   }
 }
 
-export async function exchangeAuthCode(code: string, wixSiteId: string): Promise<void> {
+export async function exchangeAuthCode(code: string, wixSiteId: string, metaSiteId?: string): Promise<void> {
   const response = await createHubspotClient().oauth.tokensApi.create(
     "authorization_code",
     code,
@@ -64,21 +64,22 @@ export async function exchangeAuthCode(code: string, wixSiteId: string): Promise
         hubspotPortalId,
       ]);
       await db.query(
-        `insert into oauth_installations (wix_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id)
-         values ($1, $2, $3, $4, $5)`,
-        [wixSiteId, encodedAccessToken, encryptedRefreshToken, expiresAt, hubspotPortalId],
+        `insert into oauth_installations (wix_site_id, wix_meta_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id)
+         values ($1, $2, $3, $4, $5, $6)`,
+        [wixSiteId, metaSiteId ?? null, encodedAccessToken, encryptedRefreshToken, expiresAt, hubspotPortalId],
       );
     } else {
       await db.query(
-        `insert into oauth_installations (wix_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id)
-         values ($1, $2, $3, $4, $5)
+        `insert into oauth_installations (wix_site_id, wix_meta_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id)
+         values ($1, $2, $3, $4, $5, $6)
          on conflict (wix_site_id)
-         do update set access_token = excluded.access_token,
+         do update set wix_meta_site_id = coalesce(excluded.wix_meta_site_id, oauth_installations.wix_meta_site_id),
+                       access_token = excluded.access_token,
                        refresh_token_encrypted = excluded.refresh_token_encrypted,
                        expires_at = excluded.expires_at,
                        hubspot_portal_id = coalesce(excluded.hubspot_portal_id, oauth_installations.hubspot_portal_id),
                        updated_at = now()`,
-        [wixSiteId, encodedAccessToken, encryptedRefreshToken, expiresAt, hubspotPortalId],
+        [wixSiteId, metaSiteId ?? null, encodedAccessToken, encryptedRefreshToken, expiresAt, hubspotPortalId],
       );
     }
     await db.query("commit");

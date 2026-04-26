@@ -22,22 +22,30 @@ Production-style Wix CLI integration that connects Wix and HubSpot for secure OA
 - [x] Feature #1 implemented: reliable Wix <-> HubSpot contact sync with mapping, conflict rules, idempotency, and loop prevention.
 - [x] Feature #2 implemented: Wix form submission -> HubSpot lead/contact upsert with attribution capture.
 
-### 3) GitHub repository (fill before submission)
+### 3) GitHub repository
 
-- Repo URL: `<<ADD_GITHUB_REPO_URL_HERE>>`
+- Repo URL: `[ADD_GITHUB_REPO_URL](https://github.com/Jobsidney/app-market-wix-assignment/tree/Development)`
 
-### 4) Tester username / account (fill before submission)
+### 4) Test environments
 
-- Username or test account email: `<<ADD_TEST_USERNAME_HERE>>`
+| System | URL |
+| --- | --- |
+| Production backend | https://app-market-wix-assignment-production.up.railway.app |
+| HubSpot portal | https://app-eu1.hubspot.com/contacts/148321192/objects/0-1/views/all/list |
+| Wix dashboard | https://manage.wix.com/dashboard/f8758271-c14a-495a-9b70-4e4e35ab04f1/0bbfcbba-4105-4579-83ca-b5f0bb5ec2d1 |
 
-> Note: Replace both placeholders above before sharing the final submission package.
+- Production API: `https://app-market-wix-assignment-production.up.railway.app`
+- HubSpot portal ID: `148321192`
+- Wix site ID: `f8758271-c14a-495a-9b70-4e4e35ab04f1`
+- Tester account email: `jobsid933@gmail.com`
 
 ## Stack
 
 - Wix CLI app extensions (dashboard page under `src/extensions/dashboard/pages/my-page/dashboard/`: `use-dashboard-state`, layout, tokens, and `views/*` for SRP/DRY)
 - Node.js + TypeScript + Express
-- PostgreSQL
+- PostgreSQL (hosted on Railway)
 - HubSpot OAuth + CRM Contacts API
+- Deployed on Railway (production backend + DB)
 
 ## Evaluator Setup Guide (What to configure, where, and why)
 
@@ -64,6 +72,8 @@ APP_MARKET_API_KEY=<optional-static-key>
 WEBHOOK_HMAC_SECRET=<optional-hmac-secret>
 WIX_AUTOMATION_WEBHOOK_KEY=<optional-automation-shared-key>
 WIX_API_KEY=<optional-wix-contacts-api-token-for-hubspot-to-wix-create-update>
+WIX_ACCOUNT_ID=<wix-account-id-decoded-from-WIX_API_KEY-jwt>
+# WIX_CANONICAL_SITE_ID — DO NOT SET IN PRODUCTION (dev/single-site only)
 HUBSPOT_APP_ID=<optional-for-webhook-registration-script>
 HUBSPOT_DEVELOPER_API_KEY=<optional-for-webhook-registration-script>
 SYNC_SECURITY_MODE=locked
@@ -74,18 +84,60 @@ Create root `.env` (for frontend runtime values sent by Vite):
 ```bash
 PUBLIC_DEFAULT_WIX_SITE_ID=<optional-local-site-id-fallback>
 PUBLIC_APP_MARKET_API_KEY=<optional-if-using-APP_MARKET_API_KEY>
+# For local development:
 PUBLIC_API_BASE_URL=http://localhost:8787
+# For production build (must match your deployed backend URL — baked into frontend at build time):
+# PUBLIC_API_BASE_URL=https://app-market-wix-assignment-production.up.railway.app
 ```
+
+> **Important for production builds:** `PUBLIC_API_BASE_URL` is embedded into the frontend bundle at build time by Vite. Railway env vars do **not** override it. Before running `npm run build && npm run release`, make sure this is set to your production backend URL in the local `.env` file.
 
 ### B) Where each key comes from
 
-- `HUBSPOT_CLIENT_ID` / `HUBSPOT_CLIENT_SECRET`: HubSpot developer app settings.
-- `HUBSPOT_REDIRECT_URI`: must exactly match callback URI configured in HubSpot app (`/oauth/hubspot/callback`).
-- `WIX_APP_SECRET`: Wix Dev Center -> your app -> OAuth / app credentials.
-- `DATABASE_URL`: local or hosted Postgres connection string.
-- `ENCRYPTION_KEY`: deployment secret (32-byte random key).
-- `HUBSPOT_APP_ID` + `HUBSPOT_DEVELOPER_API_KEY`: only for webhook registration helper script.
-- `WIX_API_KEY`: only required when enabling HubSpot -> Wix contact create/update via Wix Contacts API.
+**`HUBSPOT_CLIENT_ID` and `HUBSPOT_CLIENT_SECRET`**
+Go to your [HubSpot developer account](https://developers.hubspot.com), open your app, and click the **Auth** tab. Copy the Client ID and Client Secret shown there.
+
+**`HUBSPOT_REDIRECT_URI`**
+The URL HubSpot sends the user back to after they approve the connection. Set it to:
+```
+https://<your-backend-domain>/oauth/hubspot/callback
+```
+Paste the same URL into your HubSpot app under **Auth → Redirect URLs** — they must match exactly.
+
+**`WIX_APP_SECRET`**
+Go to [Wix Dev Center](https://dev.wix.com), open your app, navigate to **OAuth → App Credentials**, and copy the **App Secret**.
+
+**`DATABASE_URL`**
+Your PostgreSQL connection string in the format `postgresql://user:password@host:5432/dbname`. If using Railway, copy it from your Postgres service's **Connect** tab.
+
+**`ENCRYPTION_KEY`**
+A random secret used to encrypt the HubSpot tokens stored in the database. Generate one with:
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+Keep this private — changing it after launch will invalidate all existing stored tokens.
+
+**`HUBSPOT_APP_ID` and `HUBSPOT_DEVELOPER_API_KEY`**
+Only needed if you want to register HubSpot webhooks via the CLI script (`npm run hubspot:register-webhooks`). Find the numeric App ID in your HubSpot developer app settings. The Developer API Key is under your HubSpot developer account → **Developer API key**.
+
+**`WIX_API_KEY`**
+Required for syncing contacts from HubSpot into Wix. Get it from [Wix Dev Center](https://dev.wix.com) under **API Keys**. The value starts with `IST.`.
+
+**`WIX_ACCOUNT_ID`**
+Your Wix **account** ID — this is different from your site ID even though both are UUIDs. Decode it from your `WIX_API_KEY` by running:
+```bash
+node -e "
+  const key = 'PASTE_YOUR_WIX_API_KEY_HERE';
+  const payload = JSON.parse(Buffer.from(key.split('.')[1], 'base64').toString());
+  console.log(JSON.parse(payload.data).tenant.id);
+"
+```
+The printed UUID is your `WIX_ACCOUNT_ID`. Do not use your site ID here — Wix will reject the API call with a mismatch error.
+
+**`WIX_CANONICAL_SITE_ID`**
+> **WARNING: Do NOT set this in a production / Wix App Market deployment.**
+> This variable forces every request to use a single hardcoded site ID, which breaks multi-tenant isolation — all users' data would be written to the same site bucket.
+> Only set it in a local single-site dev environment where you want to override the site ID delivered by Wix.
 
 ### C) Run sequence (backend + app)
 
@@ -144,17 +196,17 @@ npm run hubspot:register-webhooks -- --wix-site-id=<your_wix_instance_id>
 #### Wix -> backend contact webhook (Automations)
 
 - Endpoint: `POST /webhooks/wix/contact-updated`
-- Public URL example:
-  - `https://<your-public-host>/webhooks/wix/contact-updated`
+- Production URL: `https://app-market-wix-assignment-production.up.railway.app/webhooks/wix/contact-updated`
 
-In Wix Automations:
-- Trigger on contact update/create.
-- Add HTTP request action to endpoint above.
-- Send `wixSiteId` and payload fields.
-- If using `WIX_AUTOMATION_WEBHOOK_KEY`, include it as:
-  - header `x-wix-automation-key`, or
-  - body `wixAutomationKey`, or
-  - query `?wixKey=...`
+In Wix Automations (Trigger: "Contact is created or updated" → Action: "Send HTTP request"):
+- Wix Automations does **not** support custom headers in the HTTP request action.
+- Pass `wixSiteId` and `wixKey` as **URL query parameters** instead:
+  ```
+  https://<host>/webhooks/wix/contact-updated?wixSiteId=<your-site-id>&wixKey=<WIX_AUTOMATION_WEBHOOK_KEY>
+  ```
+- The request body should be sent as JSON with the contact payload. The backend deep-scans the body for email, first name, last name, phone, and contact ID across many known Wix Automation payload shapes.
+
+> **Why query params?** Wix Automations "Send HTTP request" only allows setting the URL and body — no custom header support. The `?wixKey=` query param is the supported fallback for `WIX_AUTOMATION_WEBHOOK_KEY` authentication.
 
 #### Wix form -> backend lead capture
 
@@ -248,13 +300,15 @@ This powers Feature #2 (Wix form capture -> HubSpot upsert + attribution persist
 
 ## Data Model
 
-- `oauth_installations`
-- `field_mappings`
-- `sync_mapping`
-- `sync_jobs`
-- `form_submission_events`
-- `wix_contacts_shadow` (local shadow for inbound HubSpot sync path)
-- `hubspot_embed_settings` (saved HubSpot form embed: portal, form id, region)
+- `oauth_installations` — per-site HubSpot OAuth tokens + portal ID
+- `field_mappings` — per-site field mapping rules (direction, transform)
+- `sync_definitions` — per-site sync configuration (entity types, direction, existing-record policy, `live` flag)
+- `sync_mapping` — bidirectional Wix↔HubSpot contact ID mapping, scoped per `wix_site_id`
+- `sync_jobs` — async job queue for sync events (status: `pending → done/failed`)
+- `site_sync_state` — per-site global sync on/off toggle
+- `form_submission_events` — form capture attribution data (UTMs, page URL, referrer)
+- `wix_contacts_shadow` — local shadow of Wix contacts for inbound HubSpot sync observability
+- `hubspot_embed_settings` — saved HubSpot form embed config (portal, form GUID, region)
 
 ## Local Run
 
@@ -289,6 +343,8 @@ This powers Feature #2 (Wix form capture -> HubSpot upsert + attribution persist
    - Optional server: `WEBHOOK_HMAC_SECRET` — when set, `/webhooks/*` and `/forms/*` require valid `x-sync-signature` (see sync section).
    - Optional server: `WIX_AUTOMATION_WEBHOOK_KEY` — static shared secret for Wix Automations calls to `/webhooks/wix/contact-updated` via header `x-wix-automation-key`, body `wixAutomationKey`, or query `wixKey`.
    - Optional server: `WIX_API_KEY` — `Authorization` header value for Wix Contacts v4 (HubSpot → Wix). Without it, inbound sync still updates `wix_contacts_shadow` only.
+   - Optional server: `WIX_ACCOUNT_ID` — Wix account ID extracted from the `WIX_API_KEY` JWT (see B above). If omitted the server attempts to derive it automatically from the key, but setting it explicitly is more reliable.
+   - Optional server: `WIX_CANONICAL_SITE_ID` — **do NOT set in production**. Dev-only override that forces a single hardcoded site ID; breaks multi-tenant isolation if set on the App Market deployment.
    - Optional (CLI only): `HUBSPOT_APP_ID`, `HUBSPOT_DEVELOPER_API_KEY` — for `npm run hubspot:register-webhooks` (see **HubSpot webhooks**).
    - Optional Wix / Vite: `PUBLIC_DEFAULT_WIX_SITE_ID` — only used when **`WIX_APP_SECRET` is not set** on the server (local dev); sends `x-wix-site-id` (defaults to `demo-site`).
    - Optional Wix / Vite: `PUBLIC_APP_MARKET_API_KEY` — only if you use `APP_MARKET_API_KEY` without `WIX_APP_SECRET`.
@@ -356,30 +412,96 @@ HubSpot’s **Webhooks v3** `subscriptions` API is easiest with a **developer AP
 npm run hubspot:register-webhooks -- --wix-site-id=<your_wix_instance_id>
 ```
 
-This creates an active **`contact.propertyChange`** subscription. Your app’s **webhook target URL** must still match what HubSpot expects for that app (often configured in the HubSpot developer UI for the app’s webhook base URL).
+This creates two active subscriptions: **`contact.creation`** (fires when any new contact is created, regardless of which properties are set) and **`contact.propertyChange`** (fires on field-level changes). Your app’s **webhook target URL** must still match what HubSpot expects for that app (configured in the HubSpot developer UI under the app’s webhook base URL).
 
 ## Wix → backend contact events (Automations / HTTP)
 
-To trigger **`POST /webhooks/wix/contact-updated`** from Wix when a contact changes, use **Wix Automations** (or similar) with an **HTTP request** action to your public base URL. If the Wix UI cannot set custom headers, include `wixSiteId` and `wixAutomationKey` in the JSON body instead (matching `WIX_AUTOMATION_WEBHOOK_KEY`). Example JSON body shape (adapt to your automation variables):
+To trigger **`POST /webhooks/wix/contact-updated`** from Wix when a contact changes, use **Wix Automations** with a "Contact is created or updated" trigger and an **HTTP request** action.
+
+### Working configuration
+
+Because Wix Automations does not support custom headers in the HTTP action, authentication and site ID must be passed as query parameters:
+
+```
+POST https://<host>/webhooks/wix/contact-updated?wixSiteId=<site-id>&wixKey=<WIX_AUTOMATION_WEBHOOK_KEY>
+```
+
+Leave the request body as the default full Wix event payload. The backend extracts contact fields (email, first name, last name, phone, contact ID) automatically from the nested Wix event structure.
+
+### Authentication options (any one is sufficient)
+
+| Method | How to pass |
+| --- | --- |
+| HMAC signature | `x-sync-signature` header (HMAC-SHA256 of raw body using `WEBHOOK_HMAC_SECRET`) |
+| Automation key | `x-wix-automation-key` header, OR `wixAutomationKey` body field, OR `?wixKey=` query param |
+
+### Custom body params (optional override)
+
+If you want explicit control over what's synced, you can send a custom JSON body:
 
 ```json
 {
-  "source": "wix",
-  "wixSiteId": "<your wix instanceId>",
-  "wixAutomationKey": "<matches WIX_AUTOMATION_WEBHOOK_KEY>",
   "wixContactId": "{{contact id}}",
-  "payload": {
-    "contactInfo": { "firstName": "...", "lastName": "..." },
-    "primaryInfo": { "email": "..." }
-  },
-  "updatedAt": "2026-04-22T12:00:00.000Z"
+  "email": "{{contact email}}",
+  "firstName": "{{contact first name}}",
+  "lastName": "{{contact last name}}"
 }
 ```
 
-Send **`x-wix-site-id`** and either:
+Variable tokens like `{{contact id}}` are resolved by Wix Automations at runtime.
 
-- **`x-sync-signature`** (preferred, when you can compute HMAC), or
-- **one Wix automation key input** matching `WIX_AUTOMATION_WEBHOOK_KEY`: header `x-wix-automation-key`, body `wixAutomationKey`, or query `wixKey`.
+## Production Deployment (Railway)
+
+The backend is deployed on Railway at `https://app-market-wix-assignment-production.up.railway.app`.
+
+### Backend deploy
+
+Railway automatically deploys from the connected git branch on push. Required env vars (set in Railway):
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Railway Postgres connection string |
+| `ENCRYPTION_KEY` | Token encryption key (32+ chars) |
+| `HUBSPOT_CLIENT_ID` | HubSpot app client ID |
+| `HUBSPOT_CLIENT_SECRET` | HubSpot app client secret |
+| `HUBSPOT_REDIRECT_URI` | `https://app-market-wix-assignment-production.up.railway.app/oauth/hubspot/callback` |
+| `WIX_API_KEY` | Wix app-level API key (IST token) |
+| `WIX_ACCOUNT_ID` | Decoded from WIX_API_KEY JWT |
+| `WIX_APP_SECRET` | Wix app secret from Dev Center |
+| `WIX_AUTOMATION_WEBHOOK_KEY` | Shared key for Wix Automation webhook auth |
+| `WEBHOOK_HMAC_SECRET` | HMAC secret for webhook signature verification |
+| `HUBSPOT_APP_ID` | HubSpot app numeric ID |
+| `SYNC_SECURITY_MODE` | Set to `standard` or `locked` |
+
+> **Do NOT set `WIX_CANONICAL_SITE_ID` in production.** This env var is a local dev override that forces a single hardcoded site ID, breaking multi-tenant isolation.
+
+### Frontend deploy (Wix extension)
+
+The frontend is a Wix CLI extension. It is **not** deployed to Railway — it runs inside the Wix platform as an app version.
+
+To deploy a new frontend version:
+
+1. Ensure `PUBLIC_API_BASE_URL` in root `.env` points to the production Railway URL (not localhost)
+2. From the `app-market/` directory:
+   ```bash
+   npm run build && npm run release
+   ```
+   > `npm run release` requires an interactive terminal (TTY). Run it directly in your terminal, not via a script runner.
+3. In the Wix Dev Center, publish the new app version
+4. Sites that have the app installed will receive the update
+
+### App installation (multi-tenant)
+
+Each Wix site owner installs the app through the official Wix App Market install URL. After installation:
+- Their site ID is registered with the app via Wix OAuth/lifecycle events
+- They connect their own HubSpot account through the in-app OAuth flow
+- All data (sync definitions, field mappings, contacts, tokens) is isolated per `wix_site_id`
+
+> Sites that were added manually to the database (not via the official install flow) may receive `meta-site not found` errors from the Wix Contacts API. Use the official install URL to properly register a site.
+
+### App lifecycle endpoint
+
+`POST /lifecycle/wix` — Wix sends APP_REMOVED lifecycle events here (signed with `WIX_APP_SECRET`). On removal, all data for that site is deleted from every table. Configure this URL in the Wix Dev Center under your app's lifecycle webhook settings.
 
 ## Notes / Current Constraints
 
@@ -452,7 +574,7 @@ In your HubSpot developer app:
 
 - Add the ngrok callback URL to allowed redirect URLs:
   - `https://abc12345.ngrok-free.app/oauth/hubspot/callback`
-- Ensure webhook subscription includes `contact.propertyChange`.
+- Ensure webhook subscriptions include both `contact.creation` and `contact.propertyChange` (run `npm run hubspot:register-webhooks` to register both).
 - Ensure webhook base/target points to your ngrok host.
 
 ### 5) Wix automation configuration checks

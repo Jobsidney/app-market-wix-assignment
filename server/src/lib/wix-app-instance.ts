@@ -59,3 +59,8 @@ export function getInstanceIdFromPayload(payload: Record<string, unknown>): stri
   const id = payload.instanceId;
   return typeof id === "string" && id.trim() ? id.trim() : null;
 }
+
+export function getMetaSiteIdFromPayload(payload: Record<string, unknown>): string | null {
+  const id = payload.metaSiteId;
+  return typeof id === "string" && id.trim() ? id.trim() : null;
+}

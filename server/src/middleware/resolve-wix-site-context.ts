@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { env } from "../config/env.js";
-import { getInstanceIdFromPayload, parseWixInstancePayloadUnsigned, verifyWixSignedInstance } from "../lib/wix-app-instance.js";
+import { getInstanceIdFromPayload, getMetaSiteIdFromPayload, parseWixInstancePayloadUnsigned, verifyWixSignedInstance } from "../lib/wix-app-instance.js";
 
 function applyCanonicalSiteId(resolved: string): string {
   const canonical = env.WIX_CANONICAL_SITE_ID?.trim();
@@ -29,6 +29,10 @@ export function resolveWixSiteContext(req: Request, res: Response, next: NextFun
       return;
     }
     res.locals.wixSiteId = applyCanonicalSiteId(instanceId);
+    const metaSiteId = getMetaSiteIdFromPayload(payload);
+    if (metaSiteId) {
+      res.locals.wixMetaSiteId = metaSiteId;
+    }
     next();
     return;
   }
@@ -43,6 +47,10 @@ export function resolveWixSiteContext(req: Request, res: Response, next: NextFun
       const instanceId = payload ? getInstanceIdFromPayload(payload) : null;
       if (instanceId) {
         res.locals.wixSiteId = applyCanonicalSiteId(instanceId);
+        const metaSiteId = payload ? getMetaSiteIdFromPayload(payload) : null;
+        if (metaSiteId) {
+          res.locals.wixMetaSiteId = metaSiteId;
+        }
         next();
         return;
       }

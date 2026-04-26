@@ -1,5 +1,6 @@
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
+import { db } from "../lib/db.js";
 import { upsertWixContactShadow } from "./wix-contacts-shadow.js";
 
 const CONTACTS_V4 = "https://www.wixapis.com/contacts/v4/contacts";
@@ -39,10 +40,19 @@ function deriveAccountIdFromApiKey(apiKey: string): string | undefined {
   return typeof id === "string" && id.trim().length > 0 ? id.trim() : undefined;
 }
 
-function wixHeaders(siteId: string): Record<string, string> | null {
+async function resolveMetaSiteId(wixSiteId: string): Promise<string> {
+  const result = await db.query<{ wix_meta_site_id: string | null }>(
+    "select wix_meta_site_id from oauth_installations where wix_site_id = $1 limit 1",
+    [wixSiteId],
+  );
+  return result.rows[0]?.wix_meta_site_id ?? wixSiteId;
+}
+
+async function wixHeaders(wixSiteId: string): Promise<Record<string, string> | null> {
   if (!env.WIX_API_KEY) {
     return null;
   }
+  const siteId = await resolveMetaSiteId(wixSiteId);
   const accountId = env.WIX_ACCOUNT_ID?.trim() || deriveAccountIdFromApiKey(env.WIX_API_KEY);
   return {
     Authorization: env.WIX_API_KEY,
@@ -116,7 +126,7 @@ interface WixContactJson {
 }
 
 async function fetchWixContact(wixSiteId: string, contactId: string): Promise<WixContactJson | null> {
-  const headers = wixHeaders(wixSiteId);
+  const headers = await wixHeaders(wixSiteId);
   if (!headers) {
     return null;
   }
@@ -180,7 +190,7 @@ export async function createWixContactFromHubspotPayload(
 ): Promise<string> {
   const shadowKey = `hubspot-${hubspotContactId}`;
   await upsertWixContactShadow(wixSiteId, shadowKey, transformedPayload);
-  const headers = wixHeaders(wixSiteId);
+  const headers = await wixHeaders(wixSiteId);
   if (!headers) {
     throw new Error("WIX_API_KEY is not configured — set it in your server environment variables");
   }
@@ -240,7 +250,7 @@ export async function applyInboundHubspotToWixContact(
   transformedPayload: Record<string, unknown>,
 ): Promise<string> {
   await upsertWixContactShadow(wixSiteId, wixContactId, transformedPayload);
-  const headers = wixHeaders(wixSiteId);
+  const headers = await wixHeaders(wixSiteId);
   if (!headers) {
     throw new Error("WIX_API_KEY is missing; cannot apply HubSpot→Wix update");
   }
