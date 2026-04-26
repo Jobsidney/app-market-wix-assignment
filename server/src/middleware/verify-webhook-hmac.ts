@@ -20,6 +20,27 @@ export function verifyWebhookHmac(req: Request, res: Response, next: NextFunctio
     next();
     return;
   }
+  // Wix Dev Center app webhooks: verified via x-wix-signature header (HMAC-SHA256 of raw body using WIX_APP_SECRET)
+  if (req.path.startsWith("/wix/") && env.WIX_APP_SECRET) {
+    const wixSig = req.header("x-wix-signature")?.trim() ?? "";
+    if (wixSig) {
+      const raw = (req as RequestWithRaw).rawBody;
+      if (raw) {
+        const expected = crypto.createHmac("sha256", env.WIX_APP_SECRET).update(raw).digest("base64");
+        if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(wixSig))) {
+          next();
+          return;
+        }
+      }
+      res.status(401).json({ error: "Invalid Wix app webhook signature" });
+      return;
+    }
+    // No signature header — allow through if WEBHOOK_HMAC_SECRET is also not set (dev/test)
+    if (!env.WEBHOOK_HMAC_SECRET) {
+      next();
+      return;
+    }
+  }
   if (!env.WEBHOOK_HMAC_SECRET) {
     next();
     return;

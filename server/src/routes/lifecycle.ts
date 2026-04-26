@@ -2,7 +2,7 @@ import { Router } from "express";
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 import { db } from "../lib/db.js";
-import { verifyWixSignedInstance } from "../lib/wix-app-instance.js";
+import { getMetaSiteIdFromPayload, verifyWixSignedInstance } from "../lib/wix-app-instance.js";
 
 export const lifecycleRouter = Router();
 
@@ -38,12 +38,32 @@ lifecycleRouter.post("/wix", async (req, res) => {
   }
 
   const eventType = req.body?.eventType as string | undefined;
-  const wixSiteId = (payload.siteId ?? payload.instanceId) as string | undefined;
+  const wixSiteId = (payload.instanceId ?? payload.siteId) as string | undefined;
+  const metaSiteId = getMetaSiteIdFromPayload(payload);
 
-  logger.info({ eventType, wixSiteId }, "Wix lifecycle event received");
+  logger.info({ eventType, wixSiteId, metaSiteId }, "Wix lifecycle event received");
+
+  if (eventType === "APP_INSTALLED" && wixSiteId) {
+    await db.query(
+      `insert into site_meta (wix_site_id, wix_meta_site_id)
+       values ($1, $2)
+       on conflict (wix_site_id)
+       do update set wix_meta_site_id = coalesce($2, site_meta.wix_meta_site_id),
+                     updated_at = now()`,
+      [wixSiteId, metaSiteId ?? null],
+    );
+    await db.query(
+      `update oauth_installations
+       set wix_meta_site_id = $2
+       where wix_site_id = $1 and $2 is not null`,
+      [wixSiteId, metaSiteId ?? null],
+    );
+    logger.info({ wixSiteId, metaSiteId }, "APP_INSTALLED: site meta stored");
+  }
 
   if (eventType === "APP_REMOVED" && wixSiteId) {
     await deleteSiteData(wixSiteId);
+    await db.query("delete from site_meta where wix_site_id = $1", [wixSiteId]);
     logger.info({ wixSiteId }, "APP_REMOVED: site data deleted");
   }
 

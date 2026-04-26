@@ -42,7 +42,11 @@ function deriveAccountIdFromApiKey(apiKey: string): string | undefined {
 
 async function resolveMetaSiteId(wixSiteId: string): Promise<string> {
   const result = await db.query<{ wix_meta_site_id: string | null }>(
-    "select wix_meta_site_id from oauth_installations where wix_site_id = $1 limit 1",
+    `select coalesce(o.wix_meta_site_id, s.wix_meta_site_id) as wix_meta_site_id
+     from (select $1::text as id) ref
+     left join oauth_installations o on o.wix_site_id = ref.id
+     left join site_meta s on s.wix_site_id = ref.id
+     limit 1`,
     [wixSiteId],
   );
   return result.rows[0]?.wix_meta_site_id ?? wixSiteId;
