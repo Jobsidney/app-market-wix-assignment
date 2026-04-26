@@ -32,7 +32,7 @@ async function fetchHubspotPortalId(accessToken: string): Promise<string | null>
   }
 }
 
-export async function exchangeAuthCode(code: string, wixSiteId: string): Promise<void> {
+export async function exchangeAuthCode(code: string, wixSiteId: string, metaSiteId?: string): Promise<void> {
   const response = await createHubspotClient().oauth.tokensApi.create(
     "authorization_code",
     code,
@@ -47,28 +47,61 @@ export async function exchangeAuthCode(code: string, wixSiteId: string): Promise
     typeof tokenHubId !== "undefined" && tokenHubId !== null
       ? String(tokenHubId)
       : await fetchHubspotPortalId(response.accessToken);
-  await db.query(
-    `insert into oauth_installations (wix_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id)
-     values ($1, $2, $3, $4, $5)
-     on conflict (wix_site_id)
-     do update set access_token = excluded.access_token,
-                   refresh_token_encrypted = excluded.refresh_token_encrypted,
-                   expires_at = excluded.expires_at,
-                   hubspot_portal_id = coalesce(excluded.hubspot_portal_id, oauth_installations.hubspot_portal_id),
-                   updated_at = now()`,
-    [wixSiteId, encodeAccessTokenForStorage(response.accessToken), encrypt(response.refreshToken), expiresAt, hubspotPortalId],
-  );
+  if (hubspotPortalId) {
+    await db.query(
+      "delete from oauth_installations where hubspot_portal_id = $1 and wix_site_id <> $2",
+      [hubspotPortalId, wixSiteId],
+    );
+  }
+  const encodedAccessToken = encodeAccessTokenForStorage(response.accessToken);
+  const encryptedRefreshToken = encrypt(response.refreshToken);
+
+  await db.query("begin");
+  try {
+    if (hubspotPortalId) {
+      await db.query("delete from oauth_installations where wix_site_id = $1 or hubspot_portal_id = $2", [
+        wixSiteId,
+        hubspotPortalId,
+      ]);
+      await db.query(
+        `insert into oauth_installations (wix_site_id, wix_meta_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id)
+         values ($1, $2, $3, $4, $5, $6)`,
+        [wixSiteId, metaSiteId ?? null, encodedAccessToken, encryptedRefreshToken, expiresAt, hubspotPortalId],
+      );
+    } else {
+      await db.query(
+        `insert into oauth_installations (wix_site_id, wix_meta_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id)
+         values ($1, $2, $3, $4, $5, $6)
+         on conflict (wix_site_id)
+         do update set wix_meta_site_id = coalesce(excluded.wix_meta_site_id, oauth_installations.wix_meta_site_id),
+                       access_token = excluded.access_token,
+                       refresh_token_encrypted = excluded.refresh_token_encrypted,
+                       expires_at = excluded.expires_at,
+                       hubspot_portal_id = coalesce(excluded.hubspot_portal_id, oauth_installations.hubspot_portal_id),
+                       updated_at = now()`,
+        [wixSiteId, metaSiteId ?? null, encodedAccessToken, encryptedRefreshToken, expiresAt, hubspotPortalId],
+      );
+    }
+    await db.query("commit");
+  } catch (error) {
+    await db.query("rollback");
+    throw error;
+  }
 }
 
 export async function getValidAccessToken(wixSiteId: string): Promise<string> {
   const result = await db.query<InstallationRecord>(
-    "select wix_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id from oauth_installations where wix_site_id = $1",
+    `select wix_site_id, access_token, refresh_token_encrypted, expires_at, hubspot_portal_id
+     from oauth_installations
+     where wix_site_id = $1 or wix_meta_site_id = $1
+     limit 1`,
     [wixSiteId],
   );
   const installation = result.rows[0];
   if (!installation) {
     throw new Error("HubSpot installation not found for site");
   }
+  const canonicalSiteId = installation.wix_site_id;
   if (new Date(installation.expires_at).getTime() > Date.now() + 30_000) {
     const validToken = decodeAccessTokenFromStorage(installation.access_token);
     if (!installation.hubspot_portal_id) {
@@ -76,7 +109,7 @@ export async function getValidAccessToken(wixSiteId: string): Promise<string> {
       if (portalId) {
         await db.query(
           `update oauth_installations set hubspot_portal_id = $2, updated_at = now() where wix_site_id = $1`,
-          [wixSiteId, portalId],
+          [canonicalSiteId, portalId],
         );
       }
     }
@@ -102,7 +135,7 @@ export async function getValidAccessToken(wixSiteId: string): Promise<string> {
           updated_at = now()
       where wix_site_id = $1`,
     [
-      wixSiteId,
+      canonicalSiteId,
       encodeAccessTokenForStorage(refreshed.accessToken),
       encrypt(refreshed.refreshToken),
       expiresAt,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { dashboard } from "@wix/dashboard";
 import { apiRequest } from "../api/api-client";
 import { wixFieldPalette } from "../shared/constants";
 import { buildDefaultMappings } from "../shared/mapping-utils";
@@ -21,6 +22,17 @@ function normalizeSyncDirection(value: string): SyncDirection {
     return value;
   }
   return "bidirectional";
+}
+
+function showDashboardToast(
+  message: string,
+  type: "standard" | "success" | "warning" | "error" = "success",
+): void {
+  try {
+    dashboard.showToast({ message, type });
+  } catch {
+    // showToast is only available inside the Wix dashboard host; ignore in other contexts.
+  }
 }
 
 function sameSyncId(a: number | string | null | undefined, b: number | string | null | undefined): boolean {
@@ -57,7 +69,13 @@ export function useDashboardState() {
   const [syncStarted, setSyncStarted] = useState(false);
   const [postWizardPhase, setPostWizardPhase] = useState<null | "historical" | "success_overlay" | "summary">(null);
   const [liveEnabled, setLiveEnabled] = useState(true);
-  const getSyncQuery = (syncId: number | null) => (syncId ? `?syncId=${encodeURIComponent(String(syncId))}` : "");
+  const getSyncQuery = (syncId: number | null) =>
+    syncId !== null && syncId !== undefined ? `?syncId=${encodeURIComponent(String(syncId))}` : "";
+  const getSyncJobsPath = (syncId: number | null) => {
+    const basePath = `/dashboard/sync-jobs${getSyncQuery(syncId)}`;
+    const separator = basePath.includes("?") ? "&" : "?";
+    return `${basePath}${separator}_ts=${Date.now()}`;
+  };
 
   const selectedSync = useMemo(
     () => syncDefinitions.find((sync) => sameSyncId(sync.id, selectedSyncId)) ?? null,
@@ -257,17 +275,19 @@ export function useDashboardState() {
               setExistingRecordPolicy(firstSync.existingRecordPolicy);
             }
           }
-          try {
-            mappingResult = await apiRequest<{ mappings: Array<Omit<MappingRow, "id"> & { id: number }> }>(
-              `/mappings${getSyncQuery(firstSyncId)}`,
-            );
-          } catch {
-            mappingResult = { mappings: [] };
-          }
-          try {
-            jobsResult = await apiRequest<SyncJobsResponse>(`/dashboard/sync-jobs${getSyncQuery(firstSyncId)}`);
-          } catch {
-            jobsResult = { jobs: [], managedRecordsCount: 0 };
+          if (firstSyncId !== null) {
+            try {
+              mappingResult = await apiRequest<{ mappings: Array<Omit<MappingRow, "id"> & { id: number }> }>(
+                `/mappings${getSyncQuery(firstSyncId)}`,
+              );
+            } catch {
+              mappingResult = { mappings: [] };
+            }
+            try {
+              jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(firstSyncId));
+            } catch {
+              jobsResult = { jobs: [], managedRecordsCount: 0 };
+            }
           }
         }
         if (mappingResult.mappings.length > 0) {
@@ -286,7 +306,25 @@ export function useDashboardState() {
         setJobs(jobsResult.jobs);
         setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
         const hasSavedSync = status.connected && syncsResult.syncs.length > 0;
-        setDashboardMode(hasSavedSync ? "list" : "wizard");
+        if (hasSavedSync) {
+          setDashboardMode("list");
+        } else if (status.connected && syncsResult.syncs.length === 0) {
+          try {
+            const created = await apiRequest<{ sync: SyncDefinition }>("/dashboard/syncs", {
+              method: "POST",
+              body: JSON.stringify({ name: defaultSyncBaseName }),
+            });
+            setSyncDefinitions([created.sync]);
+            setSelectedSyncId(created.sync.id);
+            setSelectedSyncName(created.sync.name);
+            setLiveEnabled(created.sync.live);
+          } catch {
+            // sync creation failed — wizard will surface the error when user tries to save
+          }
+          setDashboardMode("wizard");
+        } else {
+          setDashboardMode("wizard");
+        }
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : "Failed to load dashboard.");
       } finally {
@@ -326,6 +364,31 @@ export function useDashboardState() {
     setLiveEnabled(selectedSync?.live ?? true);
   }, [dashboardMode, selectedSync]);
 
+  useEffect(() => {
+    const shouldPollHistory =
+      dashboardMode === "details" || postWizardPhase === "summary" || postWizardPhase === "success_overlay";
+    if (!shouldPollHistory || !selectedSyncId) {
+      return;
+    }
+    let cancelled = false;
+    const intervalId = window.setInterval(() => {
+      void (async () => {
+        try {
+          const jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(selectedSyncId));
+          if (cancelled) {
+            return;
+          }
+          setJobs(jobsResult.jobs);
+          setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
+        } catch {}
+      })();
+    }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [dashboardMode, postWizardPhase, selectedSyncId]);
+
   const handleConnectToggle = async () => {
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -336,7 +399,36 @@ export function useDashboardState() {
         setConnected(false);
       } else {
         const { authorizeUrl } = await apiRequest<{ authorizeUrl: string }>("/connection/authorize-url");
-        window.open(authorizeUrl, "_blank");
+        const left = Math.round(window.screenX + (window.outerWidth - 640) / 2);
+        const top = Math.round(window.screenY + (window.outerHeight - 720) / 2);
+        window.open(authorizeUrl, "hubspot-oauth", `width=640,height=720,left=${left},top=${top},popup=1`);
+
+        const handler = (event: MessageEvent<unknown>) => {
+          const data = event.data as { source?: string; type?: string } | null;
+          if (!data || data.source !== "wix-hubspot-sync") return;
+          window.removeEventListener("message", handler);
+          if (data.type === "connected") {
+            setConnected(true);
+            showDashboardToast("HubSpot connected successfully!", "success");
+            setSelectedSyncId((currentId) => {
+              if (currentId === null) {
+                void apiRequest<{ sync: SyncDefinition }>("/dashboard/syncs", {
+                  method: "POST",
+                  body: JSON.stringify({ name: defaultSyncBaseName }),
+                }).then((created) => {
+                  setSyncDefinitions((prev) => (prev.length === 0 ? [created.sync] : prev));
+                  setSelectedSyncId(created.sync.id);
+                  setSelectedSyncName(created.sync.name);
+                  setLiveEnabled(created.sync.live);
+                }).catch(() => { /* surfaces as save error if user proceeds */ });
+              }
+              return currentId;
+            });
+          } else {
+            setErrorMessage("HubSpot connection failed. Please try again.");
+          }
+        };
+        window.addEventListener("message", handler);
       }
     } catch {
       setErrorMessage("Unable to update connection state.");
@@ -461,7 +553,7 @@ export function useDashboardState() {
         setSyncStarted(true);
         setSuccessMessage(null);
         try {
-          const jobsResult = await apiRequest<SyncJobsResponse>(`/dashboard/sync-jobs${getSyncQuery(selectedSyncId)}`);
+          const jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(selectedSyncId));
           setJobs(jobsResult.jobs);
           setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
         } catch {
@@ -475,7 +567,7 @@ export function useDashboardState() {
           void (async () => {
             try {
               const jobsResult = await apiRequest<SyncJobsResponse>(
-                `/dashboard/sync-jobs${getSyncQuery(selectedSyncId)}`,
+                getSyncJobsPath(selectedSyncId),
               );
               setJobs(jobsResult.jobs);
               setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
@@ -489,7 +581,7 @@ export function useDashboardState() {
         return;
       }
               const jobsResult = await apiRequest<SyncJobsResponse>(
-                `/dashboard/sync-jobs${getSyncQuery(selectedSyncId)}`,
+                getSyncJobsPath(selectedSyncId),
               );
       setJobs(jobsResult.jobs);
       setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
@@ -676,7 +768,15 @@ export function useDashboardState() {
     if (!selectedSyncId) {
       return;
     }
-    await apiRequest<{ deleted: boolean }>(`/dashboard/syncs/${selectedSyncId}`, { method: "DELETE" });
+    try {
+      await apiRequest<{ deleted: boolean }>(`/dashboard/syncs/${selectedSyncId}`, { method: "DELETE" });
+    } catch (error) {
+      showDashboardToast(
+        error instanceof Error && error.message ? error.message : "Failed to delete sync. Please try again.",
+        "error",
+      );
+      throw error;
+    }
     const remainingSyncs = syncDefinitions.filter((s) => s.id !== selectedSyncId);
     setSyncDefinitions(remainingSyncs);
     const nextSync = remainingSyncs[0] ?? null;
@@ -692,6 +792,7 @@ export function useDashboardState() {
     setSyncStarted(false);
     setLiveEnabled(nextSync?.live ?? false);
     setSuccessMessage("Sync deleted.");
+    showDashboardToast("Sync deleted successfully", "success");
   };
 
   const startSyncImmediatelyFromDetails = async () => {
@@ -706,7 +807,7 @@ export function useDashboardState() {
     historicalTimerRef.current = window.setTimeout(() => {
       void (async () => {
         try {
-          const jobsResult = await apiRequest<SyncJobsResponse>(`/dashboard/sync-jobs${getSyncQuery(selectedSyncId)}`);
+          const jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(selectedSyncId));
           setJobs(jobsResult.jobs);
           setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
         } catch {
@@ -738,6 +839,7 @@ export function useDashboardState() {
 
   const openSyncDetails = async (syncName?: string, syncId?: number) => {
     const resolvedSyncId = syncId ?? selectedSyncId;
+    clearHistoryFilters();
     if (syncName) {
       setSelectedSyncName(syncName);
     }
@@ -755,7 +857,7 @@ export function useDashboardState() {
           setSyncDirection(sync.syncDirection);
         }
       }
-      const jobsResult = await apiRequest<SyncJobsResponse>(`/dashboard/sync-jobs${getSyncQuery(resolvedSyncId ?? null)}`);
+      const jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(resolvedSyncId ?? null));
       setJobs(jobsResult.jobs);
       setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
       const mappingsResult = await apiRequest<{ mappings: Array<Omit<MappingRow, "id"> & { id: number }> }>(
@@ -795,7 +897,7 @@ export function useDashboardState() {
   }, [connected, syncDefinitions]);
   const refreshSyncHistory = async () => {
     try {
-      const jobsResult = await apiRequest<SyncJobsResponse>(`/dashboard/sync-jobs${getSyncQuery(selectedSyncId)}`);
+      const jobsResult = await apiRequest<SyncJobsResponse>(getSyncJobsPath(selectedSyncId));
       setJobs(jobsResult.jobs);
       setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
     } catch {

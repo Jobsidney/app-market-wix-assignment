@@ -21,6 +21,12 @@ async function main(): Promise<void> {
     ? new Client({ developerApiKey: devKey })
     : new Client({ accessToken: await getValidAccessToken(wixSiteId) });
 
+  const creation = await client.webhooks.subscriptionsApi.create(appId, {
+    eventType: SubscriptionCreateRequestEventTypeEnum.ContactCreation,
+    active: true,
+  });
+  console.log("Created subscription:", creation.id, creation.eventType, creation.active);
+
   const properties = (process.env.HUBSPOT_WEBHOOK_PROPERTIES?.trim() || "email,firstname,lastname,phone,jobtitle")
     .split(",")
     .map((p) => p.trim())
