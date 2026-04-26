@@ -20,7 +20,6 @@ function escapeHtml(text: string): string {
 }
 
 function renderOauthCallbackPage(connected: boolean, details?: string): string {
-  const statusText = connected ? "HubSpot connected successfully. You can return to Wix now." : "HubSpot connection failed.";
   const statusPayload = connected ? "connected" : "error";
   const extraDetails = !connected && details ? `<p class="hint">${escapeHtml(details)}</p>` : "";
   return `<!doctype html>
@@ -38,30 +37,36 @@ function renderOauthCallbackPage(connected: boolean, details?: string): string {
       .hint { font-size: 12px; color: #94a3b8; margin: 0; }
       .ok { color: #22c55e; }
       .bad { color: #ef4444; }
+      .btn { margin-top: 16px; display: inline-block; padding: 8px 20px; background: #3b82f6; color: #fff; border-radius: 6px; text-decoration: none; font-size: 14px; cursor: pointer; border: none; }
     </style>
   </head>
   <body>
     <div class="wrap">
       <div class="card">
         <p class="title ${connected ? "ok" : "bad"}">${connected ? "Connected" : "Connection Error"}</p>
-        <p class="copy">${statusText}</p>
+        <p class="copy">${connected ? "HubSpot connected. Returning to your dashboard…" : "HubSpot connection failed."}</p>
         ${extraDetails}
-        <p class="hint">This window will close automatically.</p>
+        <p class="hint" id="fallback" style="display:none">
+          Window did not close automatically.
+          <button class="btn" onclick="window.close()">Close this tab</button>
+        </p>
       </div>
     </div>
     <script>
       try {
         window.opener?.postMessage({ source: "wix-hubspot-sync", type: "${statusPayload}" }, "*");
       } catch (_) {}
+      window.close();
       setTimeout(() => {
-        window.close();
-      }, 500);
+        const el = document.getElementById("fallback");
+        if (el) el.style.display = "block";
+      }, 800);
     </script>
   </body>
 </html>`;
 }
 
-oauthRouter.get("/hubspot/callback", async (req, res, next) => {
+oauthRouter.get("/hubspot/callback", async (req, res, _next) => {
   try {
     const oauthError = readSingleQueryValue(req.query.error);
     const oauthErrorDescription = readSingleQueryValue(req.query.error_description);

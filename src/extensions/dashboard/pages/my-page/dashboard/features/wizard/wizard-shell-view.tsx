@@ -37,6 +37,7 @@ export const WizardShellView: FC<Props> = ({ vm }) => {
     isSavingMappings,
     isTogglingConnection,
     maxUnlockedStepIndex,
+    openSyncHome,
     previewPhase,
     setStep,
     showContinueCta,
@@ -62,7 +63,14 @@ export const WizardShellView: FC<Props> = ({ vm }) => {
       <div className="sync-grid" style={{ gap: 22 }}>
         <section style={{ ...shellCard, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 22px" }}>
           <div style={{ fontSize: 11, color: ds.muted, letterSpacing: "0.01em" }}>
-            Data Sync / New Sync / {currentStepLabel.replaceAll("_", " ")}
+            <button
+              type="button"
+              onClick={() => void openSyncHome()}
+              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: ds.blue, fontSize: 11, letterSpacing: "0.01em", textDecoration: "underline" }}
+            >
+              Data Sync
+            </button>
+            {" / New Sync / "}{currentStepLabel.replaceAll("_", " ")}
           </div>
           {showContinueCta ? (
             <button

@@ -10,6 +10,7 @@ import { dashboardRouter } from "./routes/dashboard.js";
 import { connectionRouter } from "./routes/connection.js";
 import { mappingsRouter } from "./routes/mappings.js";
 import { formsRouter } from "./routes/forms.js";
+import { lifecycleRouter } from "./routes/lifecycle.js";
 import { startSyncWorker } from "./services/sync-job-queue.js";
 
 assertSyncSecurityEnv();
@@ -137,6 +138,7 @@ app.use("/dashboard", dashboardRouter);
 app.use("/connection", connectionRouter);
 app.use("/mappings", mappingsRouter);
 app.use("/forms", formsRouter);
+app.use("/lifecycle", lifecycleRouter);
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   logger.error({ error }, "Unhandled server error");

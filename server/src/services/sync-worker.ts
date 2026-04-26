@@ -225,9 +225,9 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
   const hubspotContactId = event.hubspotContactId?.trim() || undefined;
   let wixContactId = resolvedWixContactId;
 
-  let mapping = wixContactId ? await getSyncMappingByWixId(wixContactId) : null;
+  let mapping = wixContactId ? await getSyncMappingByWixId(event.wixSiteId, wixContactId) : null;
   if (!mapping && hubspotContactId) {
-    mapping = await getSyncMappingByHubspotId(hubspotContactId);
+    mapping = await getSyncMappingByHubspotId(event.wixSiteId, hubspotContactId);
     if (mapping && !wixContactId) {
       wixContactId = mapping.wixContactId;
     }
@@ -291,7 +291,8 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
     const wixId = wixContactId;
     let hubspotId = mapping?.hubspotContactId ?? hubspotContactId ?? "";
     hubspotId = await upsertHubspotContact(event.wixSiteId, outbound, hubspotId || undefined);
-    await upsertSyncMapping({
+    await upsertSyncMapping(event.wixSiteId, {
+      wixSiteId: event.wixSiteId,
       wixContactId: wixId,
       hubspotContactId: hubspotId,
       lastSyncedAt: new Date().toISOString(),
@@ -332,7 +333,8 @@ export async function processSyncEvent(event: IncomingEvent): Promise<void> {
     return;
   }
 
-  await upsertSyncMapping({
+  await upsertSyncMapping(event.wixSiteId, {
+    wixSiteId: event.wixSiteId,
     wixContactId: wixId,
     hubspotContactId: hubspotId,
     lastSyncedAt: new Date().toISOString(),

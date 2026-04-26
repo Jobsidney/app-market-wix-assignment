@@ -306,7 +306,25 @@ export function useDashboardState() {
         setJobs(jobsResult.jobs);
         setDetailsManagedRecordsCount(jobsResult.managedRecordsCount ?? 0);
         const hasSavedSync = status.connected && syncsResult.syncs.length > 0;
-        setDashboardMode(hasSavedSync ? "list" : "wizard");
+        if (hasSavedSync) {
+          setDashboardMode("list");
+        } else if (status.connected && syncsResult.syncs.length === 0) {
+          try {
+            const created = await apiRequest<{ sync: SyncDefinition }>("/dashboard/syncs", {
+              method: "POST",
+              body: JSON.stringify({ name: defaultSyncBaseName }),
+            });
+            setSyncDefinitions([created.sync]);
+            setSelectedSyncId(created.sync.id);
+            setSelectedSyncName(created.sync.name);
+            setLiveEnabled(created.sync.live);
+          } catch {
+            // sync creation failed — wizard will surface the error when user tries to save
+          }
+          setDashboardMode("wizard");
+        } else {
+          setDashboardMode("wizard");
+        }
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : "Failed to load dashboard.");
       } finally {
@@ -381,7 +399,36 @@ export function useDashboardState() {
         setConnected(false);
       } else {
         const { authorizeUrl } = await apiRequest<{ authorizeUrl: string }>("/connection/authorize-url");
-        window.open(authorizeUrl, "_blank");
+        const left = Math.round(window.screenX + (window.outerWidth - 640) / 2);
+        const top = Math.round(window.screenY + (window.outerHeight - 720) / 2);
+        window.open(authorizeUrl, "hubspot-oauth", `width=640,height=720,left=${left},top=${top},popup=1`);
+
+        const handler = (event: MessageEvent<unknown>) => {
+          const data = event.data as { source?: string; type?: string } | null;
+          if (!data || data.source !== "wix-hubspot-sync") return;
+          window.removeEventListener("message", handler);
+          if (data.type === "connected") {
+            setConnected(true);
+            showDashboardToast("HubSpot connected successfully!", "success");
+            setSelectedSyncId((currentId) => {
+              if (currentId === null) {
+                void apiRequest<{ sync: SyncDefinition }>("/dashboard/syncs", {
+                  method: "POST",
+                  body: JSON.stringify({ name: defaultSyncBaseName }),
+                }).then((created) => {
+                  setSyncDefinitions((prev) => (prev.length === 0 ? [created.sync] : prev));
+                  setSelectedSyncId(created.sync.id);
+                  setSelectedSyncName(created.sync.name);
+                  setLiveEnabled(created.sync.live);
+                }).catch(() => { /* surfaces as save error if user proceeds */ });
+              }
+              return currentId;
+            });
+          } else {
+            setErrorMessage("HubSpot connection failed. Please try again.");
+          }
+        };
+        window.addEventListener("message", handler);
       }
     } catch {
       setErrorMessage("Unable to update connection state.");
