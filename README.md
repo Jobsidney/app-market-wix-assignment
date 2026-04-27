@@ -410,11 +410,6 @@ All commands run from the `app-market/` directory.
 - **Webhook security** (`WEBHOOK_HMAC_SECRET`, optional but recommended):
   - Shared secret between event sender and backend.
 
-For submission, provide the reviewer with:
-- a test environment or safe credentials,
-- the GitHub repo URL,
-- and a test user/account for connection validation.
-
 ## HubSpot webhooks
 
 ### Target URL and headers
@@ -437,39 +432,7 @@ This creates two active subscriptions: **`contact.creation`** (fires when any ne
 
 ## Wix → backend contact events (Automations / HTTP)
 
-To trigger **`POST /webhooks/wix/contact-updated`** from Wix when a contact changes, use **Wix Automations** with a "Contact is created or updated" trigger and an **HTTP request** action.
-
-### Working configuration
-
-Because Wix Automations does not support custom headers in the HTTP action, authentication and site ID must be passed as query parameters:
-
-```
-POST https://<host>/webhooks/wix/contact-updated?wixSiteId=<site-id>&wixKey=<WIX_AUTOMATION_WEBHOOK_KEY>
-```
-
-Leave the request body as the default full Wix event payload. The backend extracts contact fields (email, first name, last name, phone, contact ID) automatically from the nested Wix event structure.
-
-### Authentication options (any one is sufficient)
-
-| Method | How to pass |
-| --- | --- |
-| HMAC signature | `x-sync-signature` header (HMAC-SHA256 of raw body using `WEBHOOK_HMAC_SECRET`) |
-| Automation key | `x-wix-automation-key` header, OR `wixAutomationKey` body field, OR `?wixKey=` query param |
-
-### Custom body params (optional override)
-
-If you want explicit control over what's synced, you can send a custom JSON body:
-
-```json
-{
-  "wixContactId": "{{contact id}}",
-  "email": "{{contact email}}",
-  "firstName": "{{contact first name}}",
-  "lastName": "{{contact last name}}"
-}
-```
-
-Variable tokens like `{{contact id}}` are resolved by Wix Automations at runtime.
+How it works: To trigger **`POST /webhooks/wix/contact-updated`** from Wix when a contact changes, use **Wix Automations** with a "Contact is created or updated" trigger and an **HTTP request** action.
 
 ## Production Deployment (Railway)
 
@@ -498,8 +461,6 @@ Railway automatically deploys from the connected git branch on push. Required en
 
 ### Frontend deploy (Wix extension)
 
-The frontend is a Wix CLI extension. It is **not** deployed to Railway — it runs inside the Wix platform as an app version.
-
 To deploy a new frontend version:
 
 1. Ensure `PUBLIC_API_BASE_URL` in root `.env` points to the production Railway URL (not localhost)
@@ -518,8 +479,6 @@ Each Wix site owner installs the app through the official Wix App Market install
 - They connect their own HubSpot account through the in-app OAuth flow
 - All data (sync definitions, field mappings, contacts, tokens) is isolated per `wix_site_id`
 
-> Sites that were added manually to the database (not via the official install flow) may receive `meta-site not found` errors from the Wix Contacts API. Use the official install URL to properly register a site.
-
 ### App lifecycle endpoint
 
 `POST /lifecycle/wix` — Wix sends APP_REMOVED lifecycle events here (signed with `WIX_APP_SECRET`). On removal, all data for that site is deleted from every table. Configure this URL in the Wix Dev Center under your app's lifecycle webhook settings.
@@ -528,9 +487,8 @@ Each Wix site owner installs the app through the official Wix App Market install
 
 - HubSpot API writes are implemented for Wix → HubSpot sync and form capture.
 - HubSpot → Wix: with `WIX_API_KEY`, inbound events can **create** a Wix contact when only `hubspotContactId` is supplied (mapped payload must include at least one of name, email, or phone), or **update** when `wixContactId` is known (or resolved via `sync_mapping`). Standard `ContactInfo` fields are supported; arbitrary Wix extended/custom fields from HubSpot are not expanded in this sample.
-- Request logs redact `Authorization`, `x-app-market-key`, and `x-sync-signature` headers where supported by the logger configuration.
 
-## Local Public Testing with ngrok (Recommended for Evaluators)
+## Local Public Testing with ngrok (Recommended for local testing)
 
 When HubSpot or Wix needs to call your local backend, expose port `8787` over HTTPS using ngrok.
 
